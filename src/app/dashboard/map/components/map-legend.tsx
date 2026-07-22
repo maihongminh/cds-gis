@@ -68,6 +68,7 @@ export function MapLegend({
 }: MapLegendProps) {
   const hasCommune = activeLayerIds.includes('layer-commune');
   const hasVillages = activeLayerIds.includes('layer-villages');
+  const hasSovereigntyIslands = activeLayerIds.includes('layer-sovereignty-islands');
   const hasTourism = activeLayerIds.includes('layer-tourism');
   const hasHealth = activeLayerIds.includes('layer-health');
   const hasEducation = activeLayerIds.includes('layer-education');
@@ -78,7 +79,8 @@ export function MapLegend({
 
   const showFacilities = hasHealth || hasEducation || hasCultural || hasAdminOffices;
   const showDisaster = hasLandslide || hasFlood;
-  const hasContent = hasCommune || hasVillages || hasTourism || showFacilities || showDisaster;
+  const hasContent =
+    hasCommune || hasVillages || hasSovereigntyIslands || hasTourism || showFacilities || showDisaster;
 
   if (!hasContent) return null;
 
@@ -106,7 +108,7 @@ export function MapLegend({
       {!collapsed && (
         <div className="px-3 pb-3 space-y-3 border-t border-border/50">
           {/* Administrative */}
-          {(hasCommune || hasVillages) && (
+          {(hasCommune || hasVillages || hasSovereigntyIslands) && (
             <div className="space-y-1.5 pt-2">
               <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider">
                 Hành chính
@@ -125,6 +127,13 @@ export function MapLegend({
                   outline="#64748b"
                   label="Ranh giới 12 thôn"
                   shape="polygon"
+                />
+              )}
+              {hasSovereigntyIslands && (
+                <LegendRow
+                  color="#dc2626"
+                  outline="#facc15"
+                  label="Hoàng Sa, Trường Sa (Việt Nam)"
                 />
               )}
             </div>

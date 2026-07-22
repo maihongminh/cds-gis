@@ -49,6 +49,7 @@ import { INITIAL_MAP_LAYERS } from '@/data/mock-map-layers';
 import { MOCK_PUBLIC_FACILITIES } from '@/data/mock-map-public-facilities';
 import { MOCK_TOURISM_POIS } from '@/data/mock-map-tourism-pois';
 import { MOCK_CURRENT_STATE, MOCK_PLANNED_STATE } from '@/data/mock-map-scenarios';
+import { VIETNAM_SOVEREIGNTY_REFERENCES } from '@/data/vietnam-sovereignty-reference';
 import { BASE_LAYERS, LAOBAO_CENTER } from '@/lib/map-config';
 import { cn } from '@/lib/utils';
 
@@ -108,6 +109,65 @@ const communeStyle = new Style({
   fill: new Fill({ color: 'rgba(59, 130, 246, 0.07)' }),
 });
 
+const villageStyle = new Style({
+  stroke: new Stroke({ color: '#64748b', width: 1.25 }),
+  fill: new Fill({ color: 'rgba(148, 163, 184, 0.06)' }),
+});
+
+const selectedVillageStyle = new Style({
+  stroke: new Stroke({ color: '#0f766e', width: 3 }),
+  fill: new Fill({ color: 'rgba(20, 184, 166, 0.22)' }),
+});
+
+const villageLabelStyleCache = new WeakMap<FeatureLike, Style>();
+
+function villageLabelStyle(feature: FeatureLike) {
+  const cachedStyle = villageLabelStyleCache.get(feature);
+  if (cachedStyle) return cachedStyle;
+
+  const geometry = feature.getGeometry();
+  const style = new Style({
+    geometry: geometry instanceof Polygon ? geometry.getInteriorPoint() : undefined,
+    text: new Text({
+      text: String(feature.get('villageName') ?? ''),
+      font: '600 11px var(--font-be-vietnam-pro), sans-serif',
+      fill: new Fill({ color: '#0f172a' }),
+      stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
+    }),
+  });
+  villageLabelStyleCache.set(feature, style);
+  return style;
+}
+
+const sovereigntyStyleCache = new globalThis.Map<string, Style>();
+
+function sovereigntyReferenceStyle(feature: FeatureLike) {
+  const cacheKey = String(feature.getId() ?? feature.get('name') ?? 'sovereignty');
+  const cachedStyle = sovereigntyStyleCache.get(cacheKey);
+  if (cachedStyle) return cachedStyle;
+
+  const style = new Style({
+    image: new CircleStyle({
+      radius: 7,
+      fill: new Fill({ color: '#dc2626' }),
+      stroke: new Stroke({ color: '#facc15', width: 3 }),
+    }),
+    text: new Text({
+      text: String(feature.get('label') ?? feature.get('name') ?? ''),
+      font: '700 12px var(--font-be-vietnam-pro), sans-serif',
+      offsetY: -25,
+      textAlign: 'center',
+      padding: [3, 5, 3, 5],
+      fill: new Fill({ color: '#b91c1c' }),
+      stroke: new Stroke({ color: 'rgba(255,255,255,0.98)', width: 4 }),
+      backgroundFill: new Fill({ color: 'rgba(255,255,255,0.84)' }),
+      backgroundStroke: new Stroke({ color: 'rgba(220,38,38,0.5)', width: 1 }),
+    }),
+  });
+  sovereigntyStyleCache.set(cacheKey, style);
+  return style;
+}
+
 const currentStateStyle = new Style({
   stroke: new Stroke({ color: '#0284c7', width: 2 }),
   fill: new Fill({ color: 'rgba(56, 189, 248, 0.25)' }),
@@ -138,6 +198,8 @@ const selectedEditableStyle = new Style({
   }),
 });
 
+const riskStyleCache = new globalThis.Map<string, Style>();
+
 function riskStyle(feature: FeatureLike) {
   const level = feature.get('riskLevel');
   const color =
@@ -148,7 +210,10 @@ function riskStyle(feature: FeatureLike) {
         : level === 'medium'
           ? '#f97316'
           : '#eab308';
-  return new Style({
+  const cachedStyle = riskStyleCache.get(color);
+  if (cachedStyle) return cachedStyle;
+
+  const style = new Style({
     stroke: new Stroke({ color, width: 2 }),
     fill: new Fill({ color: `${color}38` }),
     image: new CircleStyle({
@@ -157,6 +222,8 @@ function riskStyle(feature: FeatureLike) {
       stroke: new Stroke({ color: '#fff', width: 2 }),
     }),
   });
+  riskStyleCache.set(color, style);
+  return style;
 }
 
 function createDisasterFeatures(kind: 'landslide' | 'flood') {
@@ -202,6 +269,8 @@ export default function MapClient({ mapState }: MapClientProps) {
   const baseOverlayLayerRef = React.useRef<TileLayer<XYZ> | null>(null);
   const styledBaseLayerRef = React.useRef<LayerGroup | null>(null);
   const styledBaseLayerUrlRef = React.useRef<string | null>(null);
+  const graticuleRef = React.useRef<Graticule | null>(null);
+  const tileSourceCacheRef = React.useRef(new globalThis.Map<string, XYZ>());
   const layerRegistryRef = React.useRef(new globalThis.Map<string, VectorLayer>());
   const villageLayerRef = React.useRef<VectorLayer | null>(null);
   const editableSourceRef = React.useRef(new VectorSource());
@@ -226,9 +295,20 @@ export default function MapClient({ mapState }: MapClientProps) {
     if (!targetRef.current) return;
 
     const registry = layerRegistryRef.current;
-    const baseLayer = new TileLayer<XYZ>({ visible: false, zIndex: 0 });
+    const tileSourceCache = tileSourceCacheRef.current;
+    const baseLayer = new TileLayer<XYZ>({
+      visible: false,
+      zIndex: 0,
+      preload: 1,
+      useInterimTilesOnError: true,
+    });
     baseLayerRef.current = baseLayer;
-    const baseOverlayLayer = new TileLayer<XYZ>({ visible: false, zIndex: 2 });
+    const baseOverlayLayer = new TileLayer<XYZ>({
+      visible: false,
+      zIndex: 2,
+      preload: 1,
+      useInterimTilesOnError: true,
+    });
     baseOverlayLayerRef.current = baseOverlayLayer;
     const styledBaseLayer = new LayerGroup({ visible: false, zIndex: 0 });
     styledBaseLayerRef.current = styledBaseLayer;
@@ -248,18 +328,11 @@ export default function MapClient({ mapState }: MapClientProps) {
     const villageLayer = new VectorLayer({
       source: villageSource,
       zIndex: 20,
-      style: (feature) => {
-        const selected = feature.get('villageCode') === mapStateRef.current.selectedVillageCode;
-        return new Style({
-          stroke: new Stroke({
-            color: selected ? '#0f766e' : '#64748b',
-            width: selected ? 3 : 1.25,
-          }),
-          fill: new Fill({
-            color: selected ? 'rgba(20, 184, 166, 0.22)' : 'rgba(148, 163, 184, 0.06)',
-          }),
-        });
-      },
+      renderBuffer: 64,
+      style: (feature) =>
+        feature.get('villageCode') === mapStateRef.current.selectedVillageCode
+          ? selectedVillageStyle
+          : villageStyle,
     });
     villageLayerRef.current = villageLayer;
 
@@ -267,18 +340,21 @@ export default function MapClient({ mapState }: MapClientProps) {
       source: villageSource,
       declutter: true,
       zIndex: 30,
-      style: (feature) => {
-        const geometry = feature.getGeometry();
-        return new Style({
-          geometry: geometry instanceof Polygon ? geometry.getInteriorPoint() : undefined,
-          text: new Text({
-            text: String(feature.get('villageName') ?? ''),
-            font: '600 11px var(--font-be-vietnam-pro), sans-serif',
-            fill: new Fill({ color: '#0f172a' }),
-            stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
-          }),
-        });
-      },
+      renderBuffer: 64,
+      style: villageLabelStyle,
+    });
+
+    const sovereigntyLayer = new VectorLayer({
+      source: new VectorSource({
+        features: VIETNAM_SOVEREIGNTY_REFERENCES.map((reference) =>
+          createPointFeature(reference.id, reference.coordinates, { ...reference }),
+        ),
+        wrapX: false,
+      }),
+      declutter: true,
+      renderBuffer: 96,
+      style: sovereigntyReferenceStyle,
+      zIndex: 90,
     });
 
     const tourismLayer = new VectorLayer({
@@ -375,6 +451,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       ['layer-commune', communeLayer],
       ['layer-villages', villageLayer],
       ['layer-village-labels', villageLabelLayer],
+      ['layer-sovereignty-islands', sovereigntyLayer],
       ['layer-tourism', tourismLayer],
       ['layer-disaster-landslide', landslideLayer],
       ['layer-disaster-flood', floodLayer],
@@ -393,7 +470,9 @@ export default function MapClient({ mapState }: MapClientProps) {
       showLabels: true,
       wrapX: false,
       zIndex: 1,
+      visible: false,
     });
+    graticuleRef.current = graticule;
 
     const map = new OlMap({
       target: targetRef.current,
@@ -412,6 +491,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         maxZoom: 20,
       }),
       controls: defaultControls({ rotate: false }),
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
     });
     mapRef.current = map;
 
@@ -489,6 +569,8 @@ export default function MapClient({ mapState }: MapClientProps) {
       baseOverlayLayerRef.current = null;
       styledBaseLayerRef.current = null;
       styledBaseLayerUrlRef.current = null;
+      graticuleRef.current = null;
+      tileSourceCache.clear();
       villageLayerRef.current = null;
       selectInteractionRef.current = null;
       registry.clear();
@@ -532,6 +614,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     tileLayer.setVisible(false);
     overlayLayer.setVisible(false);
     styledLayer.setVisible(false);
+    graticuleRef.current?.setVisible(config?.type === 'blank');
 
     if (config?.type === 'style' && config.url) {
       const styleUrl = config.url;
@@ -551,28 +634,37 @@ export default function MapClient({ mapState }: MapClientProps) {
     }
 
     if (config?.type === 'xyz' && config.url) {
-      tileLayer.setSource(
-        new XYZ({
+      const sourceCache = tileSourceCacheRef.current;
+      const sourceKey = `${config.id}:base`;
+      let tileSource = sourceCache.get(sourceKey);
+      if (!tileSource) {
+        tileSource = new XYZ({
           url: config.url,
           attributions: config.attribution,
           maxZoom: config.maxZoom,
           crossOrigin: 'anonymous',
           wrapX: false,
-          transition: 150,
-        }),
-      );
+          transition: 80,
+        });
+        sourceCache.set(sourceKey, tileSource);
+      }
+      tileLayer.setSource(tileSource);
       tileLayer.setVisible(true);
       if (config.overlayUrl) {
-        overlayLayer.setSource(
-          new XYZ({
+        const overlaySourceKey = `${config.id}:overlay`;
+        let overlaySource = sourceCache.get(overlaySourceKey);
+        if (!overlaySource) {
+          overlaySource = new XYZ({
             url: config.overlayUrl,
             attributions: config.attribution,
             maxZoom: config.maxZoom,
             crossOrigin: 'anonymous',
             wrapX: false,
-            transition: 150,
-          }),
-        );
+            transition: 80,
+          });
+          sourceCache.set(overlaySourceKey, overlaySource);
+        }
+        overlayLayer.setSource(overlaySource);
         overlayLayer.setVisible(true);
       } else {
         overlayLayer.setSource(null);
