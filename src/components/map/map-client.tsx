@@ -199,6 +199,7 @@ export default function MapClient({ mapState }: MapClientProps) {
   const mapRef = React.useRef<OlMap | null>(null);
   const mapStateRef = React.useRef(mapState);
   const baseLayerRef = React.useRef<TileLayer<XYZ> | null>(null);
+  const baseOverlayLayerRef = React.useRef<TileLayer<XYZ> | null>(null);
   const styledBaseLayerRef = React.useRef<LayerGroup | null>(null);
   const styledBaseLayerUrlRef = React.useRef<string | null>(null);
   const layerRegistryRef = React.useRef(new globalThis.Map<string, VectorLayer>());
@@ -227,6 +228,8 @@ export default function MapClient({ mapState }: MapClientProps) {
     const registry = layerRegistryRef.current;
     const baseLayer = new TileLayer<XYZ>({ visible: false, zIndex: 0 });
     baseLayerRef.current = baseLayer;
+    const baseOverlayLayer = new TileLayer<XYZ>({ visible: false, zIndex: 2 });
+    baseOverlayLayerRef.current = baseOverlayLayer;
     const styledBaseLayer = new LayerGroup({ visible: false, zIndex: 0 });
     styledBaseLayerRef.current = styledBaseLayer;
 
@@ -396,6 +399,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       target: targetRef.current,
       layers: [
         baseLayer,
+        baseOverlayLayer,
         styledBaseLayer,
         graticule,
         ...registeredLayers.map(([, layer]) => layer),
@@ -482,6 +486,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       map.setTarget(undefined);
       mapRef.current = null;
       baseLayerRef.current = null;
+      baseOverlayLayerRef.current = null;
       styledBaseLayerRef.current = null;
       styledBaseLayerUrlRef.current = null;
       villageLayerRef.current = null;
@@ -513,11 +518,19 @@ export default function MapClient({ mapState }: MapClientProps) {
   }, [mapReady, mapState.selectedVillageCode]);
 
   React.useEffect(() => {
-    if (!mapReady || !baseLayerRef.current || !styledBaseLayerRef.current) return;
+    if (
+      !mapReady ||
+      !baseLayerRef.current ||
+      !baseOverlayLayerRef.current ||
+      !styledBaseLayerRef.current
+    )
+      return;
     const config = BASE_LAYERS.find((item) => item.id === mapState.activeBaseLayerId);
     const tileLayer = baseLayerRef.current;
+    const overlayLayer = baseOverlayLayerRef.current;
     const styledLayer = styledBaseLayerRef.current;
     tileLayer.setVisible(false);
+    overlayLayer.setVisible(false);
     styledLayer.setVisible(false);
 
     if (config?.type === 'style' && config.url) {
@@ -549,8 +562,24 @@ export default function MapClient({ mapState }: MapClientProps) {
         }),
       );
       tileLayer.setVisible(true);
+      if (config.overlayUrl) {
+        overlayLayer.setSource(
+          new XYZ({
+            url: config.overlayUrl,
+            attributions: config.attribution,
+            maxZoom: config.maxZoom,
+            crossOrigin: 'anonymous',
+            wrapX: false,
+            transition: 150,
+          }),
+        );
+        overlayLayer.setVisible(true);
+      } else {
+        overlayLayer.setSource(null);
+      }
     } else {
       tileLayer.setSource(null);
+      overlayLayer.setSource(null);
     }
   }, [mapReady, mapState.activeBaseLayerId]);
 

@@ -23,6 +23,7 @@ export interface TileLayerConfig {
   name: string;
   type: 'blank' | 'style' | 'xyz';
   url?: string;
+  overlayUrl?: string;
   attribution: string;
   description?: string;
   maxZoom?: number;
@@ -72,43 +73,74 @@ const vietMapBasemaps: TileLayerConfig[] = vietMapTilemapApiKey
 const externalBasemaps: TileLayerConfig[] = [
   ...vietMapBasemaps,
   {
-    id: 'satellite-imagery',
-    name: 'Vệ tinh',
+    id: 'arcgis-streets',
+    name: 'Đường phố',
     type: 'xyz',
-    // Imagery only: no provider-drawn political borders or place labels.
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    description: 'Nền đường phố tương tự lựa chọn trên gis.vn',
+    maxZoom: 19,
+    status: 'requires-review',
+  },
+  {
+    id: 'arcgis-imagery-labels',
+    name: 'Vệ tinh (Nhãn)',
+    type: 'xyz',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    overlayUrl:
+      'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    attribution:
+      'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    description: 'Ảnh vệ tinh kết hợp nhãn địa danh và ranh giới tham chiếu',
+    maxZoom: 19,
+    status: 'requires-review',
+  },
+  {
+    id: 'satellite-imagery',
+    name: 'Vệ tinh (Không)',
+    type: 'xyz',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution:
       'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-    description: 'Ảnh thực địa, không kèm đường biên và nhãn chính trị',
+    description: 'Ảnh vệ tinh không kèm nhãn và đường biên',
     maxZoom: 19,
     status: 'imagery-only',
   },
   {
-    id: 'shaded-relief',
+    id: 'arcgis-topographic',
     name: 'Địa hình',
     type: 'xyz',
-    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',
-    attribution: 'Copyright &copy; Esri',
-    description: 'Nền màu thể hiện độ cao và địa hình tự nhiên',
-    maxZoom: 13,
-    status: 'imagery-only',
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    description: 'Địa hình, thủy hệ, đường và địa danh',
+    maxZoom: 19,
+    status: 'requires-review',
   },
   {
-    id: 'world-hillshade',
-    name: 'Đổ bóng',
+    id: 'arcgis-light-gray',
+    name: 'Xám nhạt',
     type: 'xyz',
-    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',
-    attribution: 'Sources: Esri, Airbus, USGS, NGA, NASA, CGIAR and the GIS User Community',
-    description: 'Đổ bóng cao độ, phù hợp quan sát vùng đồi núi',
-    maxZoom: 19,
-    status: 'imagery-only',
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    description: 'Nền sáng ít tương phản để làm nổi bật lớp GIS',
+    maxZoom: 16,
+    status: 'requires-review',
+  },
+  {
+    id: 'arcgis-dark-gray',
+    name: 'Xám đậm',
+    type: 'xyz',
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    description: 'Nền tối phù hợp với lớp cảnh báo màu sáng',
+    maxZoom: 16,
+    status: 'requires-review',
   },
 ];
 
 /**
- * A label-free imagery source is visible by default so the map remains useful
- * without inheriting a provider's political boundary overlay. A reviewed
- * VietMap/custom XYZ source can replace it through environment configuration.
+ * ArcGIS street is the no-key default, with the same ArcGIS basemap family used
+ * by gis.vn. A configured VietMap or custom XYZ source takes priority.
  */
 export const BASE_LAYERS: TileLayerConfig[] = [
   ...(configuredBasemapUrl
