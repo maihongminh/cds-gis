@@ -1,0 +1,1 @@
+export { MOCK_REPORT_TEMPLATES, MOCK_GENERATED_REPORTS } from './mock-db';

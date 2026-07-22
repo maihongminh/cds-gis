@@ -1,0 +1,20 @@
+name = "laobao"
+main = ".open-next/worker.js"
+compatibility_date = "2026-06-15"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[[services]]
+binding = "WORKER_SELF_REFERENCE"
+service = "laobao"
+
+# Set production URL via command line or wrangler secret
+# Do NOT put sensitive values here - use wrangler secret put NEXT_PUBLIC_APP_URL
+[vars]
+NEXT_PUBLIC_APP_URL = "https://laobao.windify.workers.dev"
+FRAPPE_URL = "https://cds.windify.net"
+NEXT_PUBLIC_FRAPPE_URL = "https://cds.windify.net"
+NEXTJS_ENV = "production"
