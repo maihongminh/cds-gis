@@ -513,6 +513,8 @@ export default function MapClient({ mapState }: MapClientProps) {
           attributions: config.attribution,
           maxZoom: config.maxZoom,
           crossOrigin: 'anonymous',
+          wrapX: false,
+          transition: 150,
         }),
       );
       baseLayerRef.current.setVisible(true);
