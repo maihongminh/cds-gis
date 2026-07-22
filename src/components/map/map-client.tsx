@@ -7,6 +7,7 @@ import GeoJSON from 'ol/format/GeoJSON';
 import Point from 'ol/geom/Point';
 import Polygon from 'ol/geom/Polygon';
 import Graticule from 'ol/layer/Graticule';
+import LayerGroup from 'ol/layer/Group';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import OlMap from 'ol/Map';
@@ -27,6 +28,7 @@ import Text from 'ol/style/Text';
 import type { FeatureLike } from 'ol/Feature';
 import type { EventsKey } from 'ol/events';
 import { unByKey } from 'ol/Observable';
+import { apply as applyMapboxStyle } from 'ol-mapbox-style';
 import {
   Check,
   Download,
@@ -60,8 +62,8 @@ export interface MapState {
   setSelectedVillageCode: (code: string | null) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
-  flyToCoords: [number, number] | null;
-  setFlyToCoords: (c: [number, number] | null) => void;
+  flyToCoords: [number, number, number?] | null;
+  setFlyToCoords: (c: [number, number, number?] | null) => void;
   activeBaseLayerId: string;
   setActiveBaseLayerId: (id: string) => void;
   currentRole: string | null;
@@ -197,6 +199,8 @@ export default function MapClient({ mapState }: MapClientProps) {
   const mapRef = React.useRef<OlMap | null>(null);
   const mapStateRef = React.useRef(mapState);
   const baseLayerRef = React.useRef<TileLayer<XYZ> | null>(null);
+  const styledBaseLayerRef = React.useRef<LayerGroup | null>(null);
+  const styledBaseLayerUrlRef = React.useRef<string | null>(null);
   const layerRegistryRef = React.useRef(new globalThis.Map<string, VectorLayer>());
   const villageLayerRef = React.useRef<VectorLayer | null>(null);
   const editableSourceRef = React.useRef(new VectorSource());
@@ -223,6 +227,8 @@ export default function MapClient({ mapState }: MapClientProps) {
     const registry = layerRegistryRef.current;
     const baseLayer = new TileLayer<XYZ>({ visible: false, zIndex: 0 });
     baseLayerRef.current = baseLayer;
+    const styledBaseLayer = new LayerGroup({ visible: false, zIndex: 0 });
+    styledBaseLayerRef.current = styledBaseLayer;
 
     const communeSource = new VectorSource({
       features: readGeoJsonFeatures(MOCK_LAOBAO_COMMUNE_BOUNDARY),
@@ -390,6 +396,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       target: targetRef.current,
       layers: [
         baseLayer,
+        styledBaseLayer,
         graticule,
         ...registeredLayers.map(([, layer]) => layer),
         editableLayer,
@@ -397,7 +404,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       view: new View({
         center: fromLonLat([LAOBAO_CENTER.lng, LAOBAO_CENTER.lat]),
         zoom: LAOBAO_CENTER.zoom,
-        minZoom: 9,
+        minZoom: 4,
         maxZoom: 20,
       }),
       controls: defaultControls({ rotate: false }),
@@ -475,6 +482,8 @@ export default function MapClient({ mapState }: MapClientProps) {
       map.setTarget(undefined);
       mapRef.current = null;
       baseLayerRef.current = null;
+      styledBaseLayerRef.current = null;
+      styledBaseLayerUrlRef.current = null;
       villageLayerRef.current = null;
       selectInteractionRef.current = null;
       registry.clear();
@@ -504,10 +513,32 @@ export default function MapClient({ mapState }: MapClientProps) {
   }, [mapReady, mapState.selectedVillageCode]);
 
   React.useEffect(() => {
-    if (!mapReady || !baseLayerRef.current) return;
+    if (!mapReady || !baseLayerRef.current || !styledBaseLayerRef.current) return;
     const config = BASE_LAYERS.find((item) => item.id === mapState.activeBaseLayerId);
+    const tileLayer = baseLayerRef.current;
+    const styledLayer = styledBaseLayerRef.current;
+    tileLayer.setVisible(false);
+    styledLayer.setVisible(false);
+
+    if (config?.type === 'style' && config.url) {
+      const styleUrl = config.url;
+      let cancelled = false;
+      const loadStyle = async () => {
+        if (styledBaseLayerUrlRef.current !== styleUrl) {
+          styledLayer.getLayers().clear();
+          await applyMapboxStyle(styledLayer, styleUrl);
+          styledBaseLayerUrlRef.current = styleUrl;
+        }
+        if (!cancelled) styledLayer.setVisible(true);
+      };
+      void loadStyle();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     if (config?.type === 'xyz' && config.url) {
-      baseLayerRef.current.setSource(
+      tileLayer.setSource(
         new XYZ({
           url: config.url,
           attributions: config.attribution,
@@ -517,10 +548,9 @@ export default function MapClient({ mapState }: MapClientProps) {
           transition: 150,
         }),
       );
-      baseLayerRef.current.setVisible(true);
+      tileLayer.setVisible(true);
     } else {
-      baseLayerRef.current.setVisible(false);
-      baseLayerRef.current.setSource(null);
+      tileLayer.setSource(null);
     }
   }, [mapReady, mapState.activeBaseLayerId]);
 
@@ -528,10 +558,10 @@ export default function MapClient({ mapState }: MapClientProps) {
     const flyToCoords = mapState.flyToCoords;
     const setFlyToCoords = mapState.setFlyToCoords;
     if (!mapReady || !flyToCoords || !mapRef.current) return;
-    const [lat, lng] = flyToCoords;
+    const [lat, lng, zoom = 16] = flyToCoords;
     mapRef.current.getView().animate({
       center: fromLonLat([lng, lat]),
-      zoom: 16,
+      zoom,
       duration: 700,
     });
     setFlyToCoords(null);

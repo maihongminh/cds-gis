@@ -56,7 +56,9 @@ export default function MapPage() {
 
   // ── Map navigation state ───────────────────────────────────────────────────
   const [selectedVillageCode, setSelectedVillageCode] = React.useState<string | null>(null);
-  const [flyToCoords, setFlyToCoords] = React.useState<[number, number] | null>(null);
+  const [flyToCoords, setFlyToCoords] = React.useState<
+    [number, number, number?] | null
+  >(null);
   const [activeBaseLayerId, setActiveBaseLayerId] = React.useState(BASE_LAYERS[0].id);
 
   // ── UI state ───────────────────────────────────────────────────────────────
@@ -108,10 +110,7 @@ export default function MapPage() {
 
   function handleFitCommune() {
     setSelectedVillageCode(null);
-    // Trigger a "fit commune" by setting a special flag via flyToCoords to center
-    // The MapController fitBounds on mount handles the real bounds;
-    // here we zoom back to center as an approximation.
-    setFlyToCoords([...COMMUNE_CENTER]);
+    setFlyToCoords([...COMMUNE_CENTER, 14]);
   }
 
   return (

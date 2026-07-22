@@ -12,10 +12,16 @@ export const LAOBAO_CENTER: MapCenter = {
   zoom: 13,
 };
 
+export const VIETNAM_CENTER: MapCenter = {
+  lat: 14.0583,
+  lng: 108.2772,
+  zoom: 5,
+};
+
 export interface TileLayerConfig {
   id: string;
   name: string;
-  type: 'blank' | 'xyz';
+  type: 'blank' | 'style' | 'xyz';
   url?: string;
   attribution: string;
   description?: string;
@@ -30,6 +36,26 @@ const vietMapTilemapApiKey = process.env.NEXT_PUBLIC_VIETMAP_TILEMAP_API_KEY?.tr
 
 const vietMapBasemaps: TileLayerConfig[] = vietMapTilemapApiKey
   ? [
+      {
+        id: 'vietmap-street',
+        name: 'Đường phố VN',
+        type: 'style',
+        url: `https://maps.vietmap.vn/maps/styles/tm/style.json?apikey=${vietMapTilemapApiKey}`,
+        attribution: '&copy; VIETMAP',
+        description: 'Đường, địa danh và công trình trên toàn Việt Nam',
+        maxZoom: 20,
+        status: 'requires-review',
+      },
+      {
+        id: 'vietmap-hybrid',
+        name: 'Hỗn hợp VN',
+        type: 'style',
+        url: `https://maps.vietmap.vn/maps/styles/hm/style.json?apikey=${vietMapTilemapApiKey}`,
+        attribution: '&copy; VIETMAP',
+        description: 'Ảnh vệ tinh kết hợp đường và nhãn địa danh Việt Nam',
+        maxZoom: 20,
+        status: 'requires-review',
+      },
       {
         id: 'vietmap-satellite',
         name: 'Vệ tinh Việt Nam',

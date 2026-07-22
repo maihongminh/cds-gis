@@ -16,9 +16,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui';
-import { Home, Layers } from 'lucide-react';
+import { Home, Layers, MapPinned } from 'lucide-react';
 import { VILLAGES, COMMUNE } from '@/data/laobao-administrative-units';
-import { BASE_LAYERS } from '@/lib/map-config';
+import { BASE_LAYERS, VIETNAM_CENTER } from '@/lib/map-config';
 import type { MapState } from '@/components/map/map-client';
 import { MapSearch } from './map-search';
 import { cn } from '@/lib/utils';
@@ -56,6 +56,11 @@ export function MapToolbar({
     }
   }
 
+  function handleFitVietnam() {
+    setSelectedVillageCode(null);
+    setFlyToCoords([VIETNAM_CENTER.lat, VIETNAM_CENTER.lng, VIETNAM_CENTER.zoom]);
+  }
+
   return (
     <TooltipProvider delayDuration={300}>
       <div
@@ -79,6 +84,22 @@ export function MapToolbar({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">Về toàn xã Lao Bảo</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleFitVietnam}
+              className="h-8 gap-1.5 border-border px-2.5 text-xs shadow-none cursor-pointer"
+              aria-label="Xem toàn Việt Nam"
+            >
+              <MapPinned className="size-3.5 text-primary" />
+              <span className="hidden lg:inline font-medium">Toàn Việt Nam</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Thu nhỏ để xem toàn Việt Nam</TooltipContent>
         </Tooltip>
 
         {/* Village selector */}
