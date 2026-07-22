@@ -18,6 +18,7 @@ export interface TileLayerConfig {
   type: 'blank' | 'xyz';
   url?: string;
   attribution: string;
+  description?: string;
   maxZoom?: number;
   status: 'imagery-only' | 'safe-default' | 'requires-review';
 }
@@ -27,27 +28,56 @@ const configuredBasemapAttribution =
   process.env.NEXT_PUBLIC_GIS_BASEMAP_ATTRIBUTION?.trim() ?? 'Nguồn bản đồ nền được cấu hình';
 const vietMapTilemapApiKey = process.env.NEXT_PUBLIC_VIETMAP_TILEMAP_API_KEY?.trim();
 
-const visibleBasemap: TileLayerConfig = vietMapTilemapApiKey
-  ? {
-      id: 'vietmap-satellite',
-      name: 'Vệ tinh Việt Nam',
-      type: 'xyz',
-      url: `https://maps.vietmap.vn/maps/tiles/st/{z}/{x}/{y}.png?apikey=${vietMapTilemapApiKey}`,
-      attribution: '&copy; VIETMAP',
-      maxZoom: 20,
-      status: 'requires-review',
-    }
-  : {
-      id: 'satellite-imagery',
-      name: 'Ảnh vệ tinh',
-      type: 'xyz',
-      // Imagery only: no provider-drawn political borders or place labels.
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      attribution:
-        'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-      maxZoom: 19,
-      status: 'imagery-only',
-    };
+const vietMapBasemaps: TileLayerConfig[] = vietMapTilemapApiKey
+  ? [
+      {
+        id: 'vietmap-satellite',
+        name: 'Vệ tinh Việt Nam',
+        type: 'xyz',
+        url: `https://maps.vietmap.vn/maps/tiles/st/{z}/{x}/{y}.png?apikey=${vietMapTilemapApiKey}`,
+        attribution: '&copy; VIETMAP',
+        description: 'Ảnh vệ tinh do VIETMAP cung cấp',
+        maxZoom: 20,
+        status: 'requires-review',
+      },
+    ]
+  : [];
+
+const externalBasemaps: TileLayerConfig[] = [
+  ...vietMapBasemaps,
+  {
+    id: 'satellite-imagery',
+    name: 'Vệ tinh',
+    type: 'xyz',
+    // Imagery only: no provider-drawn political borders or place labels.
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution:
+      'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    description: 'Ảnh thực địa, không kèm đường biên và nhãn chính trị',
+    maxZoom: 19,
+    status: 'imagery-only',
+  },
+  {
+    id: 'shaded-relief',
+    name: 'Địa hình',
+    type: 'xyz',
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Copyright &copy; Esri',
+    description: 'Nền màu thể hiện độ cao và địa hình tự nhiên',
+    maxZoom: 13,
+    status: 'imagery-only',
+  },
+  {
+    id: 'world-hillshade',
+    name: 'Đổ bóng',
+    type: 'xyz',
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Sources: Esri, Airbus, USGS, NGA, NASA, CGIAR and the GIS User Community',
+    description: 'Đổ bóng cao độ, phù hợp quan sát vùng đồi núi',
+    maxZoom: 19,
+    status: 'imagery-only',
+  },
+];
 
 /**
  * A label-free imagery source is visible by default so the map remains useful
@@ -67,12 +97,14 @@ export const BASE_LAYERS: TileLayerConfig[] = [
           status: 'requires-review' as const,
         },
       ]
-    : [visibleBasemap]),
+    : []),
+  ...externalBasemaps,
   {
     id: 'neutral-grid',
     name: 'Nền tọa độ',
     type: 'blank',
     attribution: 'Hệ tọa độ hiển thị EPSG:3857 · dữ liệu nghiệp vụ EPSG:4326',
+    description: 'Nền trung tính với lưới kinh độ, vĩ độ',
     maxZoom: 20,
     status: 'safe-default',
   },

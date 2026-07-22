@@ -125,7 +125,9 @@ export function MapToolbar({
                   {layer.name}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">{layer.name}</TooltipContent>
+              <TooltipContent side="bottom">
+                {layer.description ?? layer.name}
+              </TooltipContent>
             </Tooltip>
           ))}
         </div>
