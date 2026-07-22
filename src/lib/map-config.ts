@@ -15,33 +15,44 @@ export const LAOBAO_CENTER: MapCenter = {
 export interface TileLayerConfig {
   id: string;
   name: string;
-  url: string;
+  type: 'blank' | 'xyz';
+  url?: string;
   attribution: string;
   maxZoom?: number;
+  status: 'safe-default' | 'requires-review';
 }
 
+const configuredBasemapUrl = process.env.NEXT_PUBLIC_GIS_BASEMAP_URL?.trim();
+const configuredBasemapAttribution =
+  process.env.NEXT_PUBLIC_GIS_BASEMAP_ATTRIBUTION?.trim() ?? 'Nguồn bản đồ nền được cấu hình';
+
+/**
+ * No third-party basemap is enabled by default. The neutral grid keeps the GIS
+ * tools usable while the project waits for an approved sovereignty-compliant
+ * XYZ source. Configure NEXT_PUBLIC_GIS_BASEMAP_URL to enable that source.
+ */
 export const BASE_LAYERS: TileLayerConfig[] = [
   {
-    id: 'streets',
-    name: 'Đường phố',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
+    id: 'neutral-grid',
+    name: 'Nền tọa độ',
+    type: 'blank',
+    attribution: 'Hệ tọa độ hiển thị EPSG:3857 · dữ liệu nghiệp vụ EPSG:4326',
+    maxZoom: 20,
+    status: 'safe-default',
   },
-  {
-    id: 'satellite',
-    name: 'Vệ tinh',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-    maxZoom: 18,
-  },
-  {
-    id: 'topo',
-    name: 'Địa hình',
-    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    attribution: 'Map data: &copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>, <a href="http://viewfinderpanoramas.org">SRTM</a> | Style: &copy; OpenTopoMap',
-    maxZoom: 17,
-  },
+  ...(configuredBasemapUrl
+    ? [
+        {
+          id: 'approved-xyz',
+          name: 'Nền đã cấu hình',
+          type: 'xyz' as const,
+          url: configuredBasemapUrl,
+          attribution: configuredBasemapAttribution,
+          maxZoom: 20,
+          status: 'requires-review' as const,
+        },
+      ]
+    : []),
 ];
 
 export const MAP_METADATA = {

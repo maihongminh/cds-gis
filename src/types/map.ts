@@ -50,7 +50,8 @@ export type GisLayerGroupId =
   | 'administrative'
   | 'tourism'
   | 'facilities'
-  | 'disaster';
+  | 'disaster'
+  | 'planning';
 
 export interface GisLayerGroup {
   id: GisLayerGroupId;

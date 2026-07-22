@@ -16,7 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui';
-import { Home, Layers, Map, Globe } from 'lucide-react';
+import { Home, Layers } from 'lucide-react';
 import { VILLAGES, COMMUNE } from '@/data/laobao-administrative-units';
 import { BASE_LAYERS } from '@/lib/map-config';
 import type { MapState } from '@/components/map/map-client';

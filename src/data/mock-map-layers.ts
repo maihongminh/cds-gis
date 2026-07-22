@@ -253,6 +253,38 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     status: 'active',
     featureCount: 0, // hidden count for confidential
   },
+  {
+    id: 'layer-current-state',
+    name: 'Hiện trạng (minh họa)',
+    shortLabel: 'Hiện trạng',
+    dataGroup: 'land',
+    geometryType: 'polygon',
+    order: 11,
+    visibleByDefault: false,
+    styleConfig: { color: '#0284c7', fillColor: '#38bdf8', weight: 2 },
+    securityLevel: 'public',
+    allowedRoles: ['admin', 'data_officer', 'unit_leader', 'data_governance', 'commune_leader'],
+    source: 'Dữ liệu minh họa POC',
+    updateFrequency: 'Theo phiên bản',
+    status: 'active',
+    featureCount: 1,
+  },
+  {
+    id: 'layer-planned-state',
+    name: 'Kế hoạch (minh họa)',
+    shortLabel: 'Kế hoạch',
+    dataGroup: 'land',
+    geometryType: 'polygon',
+    order: 12,
+    visibleByDefault: false,
+    styleConfig: { color: '#7c3aed', fillColor: '#a78bfa', weight: 2 },
+    securityLevel: 'public',
+    allowedRoles: ['admin', 'data_officer', 'unit_leader', 'data_governance', 'commune_leader'],
+    source: 'Dữ liệu minh họa POC',
+    updateFrequency: 'Theo phiên bản',
+    status: 'active',
+    featureCount: 1,
+  },
 ];
 
 // ─── Layer Groups ─────────────────────────────────────────────────────────────
@@ -281,6 +313,12 @@ export const GIS_LAYER_GROUPS: GisLayerGroup[] = [
     label: 'Thiên tai & Cảnh báo',
     icon: 'AlertTriangle',
     layers: ['layer-disaster-landslide', 'layer-disaster-flood'],
+  },
+  {
+    id: 'planning',
+    label: 'Đối chiếu quy hoạch',
+    icon: 'Layers',
+    layers: ['layer-current-state', 'layer-planned-state'],
   },
 ];
 

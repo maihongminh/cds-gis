@@ -1,45 +1,54 @@
-// src/components/map/map-client.tsx
-// Main Leaflet map container for Lao Bao GIS demo.
-// This component is client-only (dynamically imported with ssr:false via map-shell.tsx).
+// OpenLayers GIS client for the Lao Bao map workspace.
 'use client';
 
 import * as React from 'react';
+import Feature from 'ol/Feature';
+import GeoJSON from 'ol/format/GeoJSON';
+import Point from 'ol/geom/Point';
+import Polygon from 'ol/geom/Polygon';
+import Graticule from 'ol/layer/Graticule';
+import TileLayer from 'ol/layer/Tile';
+import VectorLayer from 'ol/layer/Vector';
+import OlMap from 'ol/Map';
+import View from 'ol/View';
+import { defaults as defaultControls } from 'ol/control/defaults';
+import Draw from 'ol/interaction/Draw';
+import Modify from 'ol/interaction/Modify';
+import Select from 'ol/interaction/Select';
+import Snap from 'ol/interaction/Snap';
+import { fromLonLat, toLonLat } from 'ol/proj';
+import VectorSource from 'ol/source/Vector';
+import XYZ from 'ol/source/XYZ';
+import CircleStyle from 'ol/style/Circle';
+import Fill from 'ol/style/Fill';
+import Stroke from 'ol/style/Stroke';
+import Style from 'ol/style/Style';
+import Text from 'ol/style/Text';
+import type { FeatureLike } from 'ol/Feature';
+import type { EventsKey } from 'ol/events';
+import { unByKey } from 'ol/Observable';
 import {
-  MapContainer,
-  TileLayer,
-  GeoJSON,
-  ZoomControl,
-  useMap,
-} from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+  Check,
+  Download,
+  Eraser,
+  MapPinPlus,
+  MousePointer2,
+  Pentagon,
+  Pencil,
+  Route,
+  Trash2,
+} from 'lucide-react';
 
-import { LAOBAO_CENTER, BASE_LAYERS } from '@/lib/map-config';
-import { COMMUNE_BOUNDARY_STYLE } from '@/lib/map-style-config';
+import { Button, Input } from '@/components/ui';
 import { MOCK_LAOBAO_COMMUNE_BOUNDARY } from '@/data/mock-laobao-commune-boundary';
 import { MOCK_VILLAGE_BOUNDARIES } from '@/data/mock-laobao-boundary';
-import { MOCK_TOURISM_POIS } from '@/data/mock-map-tourism-pois';
-import { MOCK_PUBLIC_FACILITIES } from '@/data/mock-map-public-facilities';
 import { MOCK_DISASTER_RISK_ZONES } from '@/data/mock-map-disaster-risks';
-import { INITIAL_MAP_LAYERS, GIS_LAYER_GROUPS } from '@/data/mock-map-layers';
-import { useTenant } from '@/components/layout/tenant-context';
-
-import { VillageBoundaryLayer } from './village-boundary-layer';
-import { PoiLayer } from './poi-layer';
-import { PublicFacilityLayer } from './public-facility-layer';
-import { DisasterRiskLayer } from './disaster-risk-layer';
-
-import type { TourismPoi, PublicFacility, DisasterRiskZone } from '@/types/map';
-
-// Fix Leaflet default marker icon paths
-delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
-
-// ─── Exported state interface (shared with overlay UI) ────────────────────────
+import { INITIAL_MAP_LAYERS } from '@/data/mock-map-layers';
+import { MOCK_PUBLIC_FACILITIES } from '@/data/mock-map-public-facilities';
+import { MOCK_TOURISM_POIS } from '@/data/mock-map-tourism-pois';
+import { MOCK_CURRENT_STATE, MOCK_PLANNED_STATE } from '@/data/mock-map-scenarios';
+import { BASE_LAYERS, LAOBAO_CENTER } from '@/lib/map-config';
+import { cn } from '@/lib/utils';
 
 export interface MapState {
   activeLayerIds: string[];
@@ -58,190 +67,763 @@ export interface MapState {
   currentRole: string | null;
 }
 
-// ─── Sub-component: Map controller (fly/fit) ──────────────────────────────────
+type EditorMode = 'view' | 'point' | 'line' | 'polygon' | 'modify';
 
-function MapController({
-  flyToCoords,
-  clearFlyTo,
-  fitBoundsOnMount,
-}: {
-  flyToCoords: [number, number] | null;
-  clearFlyTo: () => void;
-  fitBoundsOnMount: boolean;
-}) {
-  const map = useMap();
+const geoJsonFormat = new GeoJSON();
 
-  // FitBounds to commune boundary on first render
-  React.useEffect(() => {
-    if (!fitBoundsOnMount) return;
-    const coords = MOCK_LAOBAO_COMMUNE_BOUNDARY.features[0]?.geometry;
-    if (coords && (coords as { type: string; coordinates: number[][][] }).type === 'Polygon') {
-      const rings = (coords as { type: string; coordinates: number[][][] }).coordinates[0];
-      const latlngs = rings.map(([lng, lat]) => L.latLng(lat, lng));
-      const bounds = L.latLngBounds(latlngs);
-      map.fitBounds(bounds, { padding: [30, 30] });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // FlyTo on search/village select
-  React.useEffect(() => {
-    if (flyToCoords) {
-      map.flyTo(flyToCoords, 16, { animate: true, duration: 1.2 });
-      clearFlyTo();
-    }
-  }, [flyToCoords, map, clearFlyTo]);
-
-  return null;
+function readGeoJsonFeatures(data: object) {
+  return geoJsonFormat.readFeatures(data, {
+    dataProjection: 'EPSG:4326',
+    featureProjection: 'EPSG:3857',
+  });
 }
 
-// ─── MapClient Props ──────────────────────────────────────────────────────────
+function createPointFeature(
+  id: string,
+  coordinates: [number, number],
+  properties: Record<string, unknown>,
+) {
+  const feature = new Feature({
+    geometry: new Point(fromLonLat(coordinates)),
+    ...properties,
+  });
+  feature.setId(id);
+  return feature;
+}
 
-export interface MapClientProps {
-  /** Shared state passed from page/shell so toolbar/panels can control the map */
+function pointStyle(color: string, radius = 6) {
+  return new Style({
+    image: new CircleStyle({
+      radius,
+      fill: new Fill({ color }),
+      stroke: new Stroke({ color: '#ffffff', width: 2 }),
+    }),
+  });
+}
+
+const communeStyle = new Style({
+  stroke: new Stroke({ color: '#1d4ed8', width: 3 }),
+  fill: new Fill({ color: 'rgba(59, 130, 246, 0.07)' }),
+});
+
+const currentStateStyle = new Style({
+  stroke: new Stroke({ color: '#0284c7', width: 2 }),
+  fill: new Fill({ color: 'rgba(56, 189, 248, 0.25)' }),
+});
+
+const plannedStateStyle = new Style({
+  stroke: new Stroke({ color: '#7c3aed', width: 2, lineDash: [8, 5] }),
+  fill: new Fill({ color: 'rgba(167, 139, 250, 0.24)' }),
+});
+
+const editableStyle = new Style({
+  stroke: new Stroke({ color: '#ea580c', width: 3, lineDash: [7, 4] }),
+  fill: new Fill({ color: 'rgba(249, 115, 22, 0.2)' }),
+  image: new CircleStyle({
+    radius: 7,
+    fill: new Fill({ color: '#ea580c' }),
+    stroke: new Stroke({ color: '#ffffff', width: 2 }),
+  }),
+});
+
+const selectedEditableStyle = new Style({
+  stroke: new Stroke({ color: '#dc2626', width: 4 }),
+  fill: new Fill({ color: 'rgba(239, 68, 68, 0.25)' }),
+  image: new CircleStyle({
+    radius: 9,
+    fill: new Fill({ color: '#dc2626' }),
+    stroke: new Stroke({ color: '#ffffff', width: 3 }),
+  }),
+});
+
+function riskStyle(feature: FeatureLike) {
+  const level = feature.get('riskLevel');
+  const color =
+    level === 'critical'
+      ? '#b91c1c'
+      : level === 'high'
+        ? '#dc2626'
+        : level === 'medium'
+          ? '#f97316'
+          : '#eab308';
+  return new Style({
+    stroke: new Stroke({ color, width: 2 }),
+    fill: new Fill({ color: `${color}38` }),
+    image: new CircleStyle({
+      radius: 7,
+      fill: new Fill({ color }),
+      stroke: new Stroke({ color: '#fff', width: 2 }),
+    }),
+  });
+}
+
+function createDisasterFeatures(kind: 'landslide' | 'flood') {
+  return MOCK_DISASTER_RISK_ZONES.filter((zone) =>
+    kind === 'landslide'
+      ? zone.riskType === 'landslide'
+      : ['flooding', 'erosion', 'critical_area'].includes(zone.riskType),
+  ).map((zone) => {
+    const geometry =
+      zone.geometry.type === 'Point'
+        ? new Point(fromLonLat(zone.geometry.coordinates as [number, number]))
+        : new Polygon(
+            (zone.geometry.coordinates as [number, number][][]).map((ring) =>
+              ring.map((coordinate) => fromLonLat(coordinate)),
+            ),
+          );
+    const feature = new Feature({
+      geometry,
+      id: zone.id,
+      name: zone.name,
+      riskLevel: zone.riskLevel,
+      riskType: zone.riskType,
+      warningMessage: zone.warningMessage,
+    });
+    feature.setId(zone.id);
+    return feature;
+  });
+}
+
+function formatCoordinate(value: number) {
+  return Number.isFinite(value) ? value.toFixed(6) : '';
+}
+
+interface MapClientProps {
   mapState: MapState;
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-
 export default function MapClient({ mapState }: MapClientProps) {
-  const { currentRole } = useTenant();
-  const {
-    activeLayerIds,
-    selectedVillageCode,
-    setSelectedVillageCode,
-    flyToCoords,
-    setFlyToCoords,
-    activeBaseLayerId,
-  } = mapState;
+  const targetRef = React.useRef<HTMLDivElement>(null);
+  const mapRef = React.useRef<OlMap | null>(null);
+  const mapStateRef = React.useRef(mapState);
+  const baseLayerRef = React.useRef<TileLayer<XYZ> | null>(null);
+  const layerRegistryRef = React.useRef(new globalThis.Map<string, VectorLayer>());
+  const villageLayerRef = React.useRef<VectorLayer | null>(null);
+  const editableSourceRef = React.useRef(new VectorSource());
+  const selectInteractionRef = React.useRef<Select | null>(null);
+  const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
+  const eventKeysRef = React.useRef<EventsKey[]>([]);
 
-  // Filter confidential layers by role
-  const allowedLayerIds = React.useMemo(() => {
-    return INITIAL_MAP_LAYERS
-      .filter((l) => {
-        if (l.securityLevel === 'confidential') {
-          return ['admin', 'data_governance', 'commune_leader'].includes(currentRole ?? '');
+  const [mapReady, setMapReady] = React.useState(false);
+  const [editorMode, setEditorMode] = React.useState<EditorMode>('view');
+  const [editableFeatureCount, setEditableFeatureCount] = React.useState(0);
+  const [selectedFeatureId, setSelectedFeatureId] = React.useState<string | null>(null);
+  const [longitude, setLongitude] = React.useState('106.633245');
+  const [latitude, setLatitude] = React.useState('16.636031');
+  const [coordinateError, setCoordinateError] = React.useState<string | null>(null);
+  const [lastClickedCoordinate, setLastClickedCoordinate] = React.useState<[number, number] | null>(null);
+
+  React.useEffect(() => {
+    mapStateRef.current = mapState;
+  }, [mapState]);
+
+  React.useEffect(() => {
+    if (!targetRef.current) return;
+
+    const registry = layerRegistryRef.current;
+    const baseLayer = new TileLayer<XYZ>({ visible: false, zIndex: 0 });
+    baseLayerRef.current = baseLayer;
+
+    const communeSource = new VectorSource({
+      features: readGeoJsonFeatures(MOCK_LAOBAO_COMMUNE_BOUNDARY),
+    });
+    const villageSource = new VectorSource({
+      features: readGeoJsonFeatures(MOCK_VILLAGE_BOUNDARIES),
+    });
+
+    const communeLayer = new VectorLayer({
+      source: communeSource,
+      style: communeStyle,
+      zIndex: 10,
+    });
+    const villageLayer = new VectorLayer({
+      source: villageSource,
+      zIndex: 20,
+      style: (feature) => {
+        const selected = feature.get('villageCode') === mapStateRef.current.selectedVillageCode;
+        return new Style({
+          stroke: new Stroke({
+            color: selected ? '#0f766e' : '#64748b',
+            width: selected ? 3 : 1.25,
+          }),
+          fill: new Fill({
+            color: selected ? 'rgba(20, 184, 166, 0.22)' : 'rgba(148, 163, 184, 0.06)',
+          }),
+        });
+      },
+    });
+    villageLayerRef.current = villageLayer;
+
+    const villageLabelLayer = new VectorLayer({
+      source: villageSource,
+      declutter: true,
+      zIndex: 30,
+      style: (feature) => {
+        const geometry = feature.getGeometry();
+        return new Style({
+          geometry: geometry instanceof Polygon ? geometry.getInteriorPoint() : undefined,
+          text: new Text({
+            text: String(feature.get('villageName') ?? ''),
+            font: '600 11px var(--font-be-vietnam-pro), sans-serif',
+            fill: new Fill({ color: '#0f172a' }),
+            stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
+          }),
+        });
+      },
+    });
+
+    const tourismLayer = new VectorLayer({
+      source: new VectorSource({
+        features: MOCK_TOURISM_POIS.map((poi) =>
+          createPointFeature(poi.id, poi.coordinates, {
+            name: poi.name,
+            kind: 'tourism',
+            villageName: poi.villageName,
+          }),
+        ),
+      }),
+      style: pointStyle('#8b5cf6', 7),
+      zIndex: 60,
+    });
+
+    const facilityDefinitions = [
+      {
+        id: 'layer-health',
+        color: '#10b981',
+        matches: (type: string) => type === 'health_station',
+      },
+      {
+        id: 'layer-education',
+        color: '#f59e0b',
+        matches: (type: string) => type === 'school',
+      },
+      {
+        id: 'layer-cultural',
+        color: '#3b82f6',
+        matches: (type: string) => type === 'cultural_house',
+      },
+      {
+        id: 'layer-admin-offices',
+        color: '#6366f1',
+        matches: (type: string) =>
+          [
+            'administrative_office',
+            'market',
+            'sports_facility',
+            'water_facility',
+            'public_infrastructure',
+          ].includes(type),
+      },
+    ];
+
+    const facilityLayers = facilityDefinitions.map((definition, index) => ({
+      id: definition.id,
+      layer: new VectorLayer({
+        source: new VectorSource({
+          features: MOCK_PUBLIC_FACILITIES.filter((facility) =>
+            definition.matches(facility.facilityType),
+          ).map((facility) =>
+            createPointFeature(facility.id, facility.coordinates, {
+              name: facility.name,
+              kind: 'facility',
+              facilityType: facility.facilityType,
+              villageName: facility.villageName,
+            }),
+          ),
+        }),
+        style: pointStyle(definition.color, 7),
+        zIndex: 70 + index,
+      }),
+    }));
+
+    const landslideLayer = new VectorLayer({
+      source: new VectorSource({ features: createDisasterFeatures('landslide') }),
+      style: riskStyle,
+      zIndex: 45,
+    });
+    const floodLayer = new VectorLayer({
+      source: new VectorSource({ features: createDisasterFeatures('flood') }),
+      style: riskStyle,
+      zIndex: 46,
+    });
+    const currentStateLayer = new VectorLayer({
+      source: new VectorSource({ features: readGeoJsonFeatures(MOCK_CURRENT_STATE) }),
+      style: currentStateStyle,
+      zIndex: 40,
+    });
+    const plannedStateLayer = new VectorLayer({
+      source: new VectorSource({ features: readGeoJsonFeatures(MOCK_PLANNED_STATE) }),
+      style: plannedStateStyle,
+      zIndex: 41,
+    });
+    const editableLayer = new VectorLayer({
+      source: editableSourceRef.current,
+      style: editableStyle,
+      zIndex: 100,
+    });
+
+    const registeredLayers: Array<[string, VectorLayer]> = [
+      ['layer-commune', communeLayer],
+      ['layer-villages', villageLayer],
+      ['layer-village-labels', villageLabelLayer],
+      ['layer-tourism', tourismLayer],
+      ['layer-disaster-landslide', landslideLayer],
+      ['layer-disaster-flood', floodLayer],
+      ['layer-current-state', currentStateLayer],
+      ['layer-planned-state', plannedStateLayer],
+      ...facilityLayers.map(({ id, layer }) => [id, layer] as [string, VectorLayer]),
+    ];
+    registeredLayers.forEach(([id, layer]) => {
+      layer.set('layerId', id);
+      layer.setVisible(false);
+      registry.set(id, layer);
+    });
+
+    const graticule = new Graticule({
+      strokeStyle: new Stroke({ color: 'rgba(100,116,139,0.28)', width: 1 }),
+      showLabels: true,
+      wrapX: false,
+      zIndex: 1,
+    });
+
+    const map = new OlMap({
+      target: targetRef.current,
+      layers: [
+        baseLayer,
+        graticule,
+        ...registeredLayers.map(([, layer]) => layer),
+        editableLayer,
+      ],
+      view: new View({
+        center: fromLonLat([LAOBAO_CENTER.lng, LAOBAO_CENTER.lat]),
+        zoom: LAOBAO_CENTER.zoom,
+        minZoom: 9,
+        maxZoom: 20,
+      }),
+      controls: defaultControls({ rotate: false }),
+    });
+    mapRef.current = map;
+
+    const selection = new Select({
+      layers: [editableLayer],
+      style: selectedEditableStyle,
+    });
+    selectInteractionRef.current = selection;
+    map.addInteraction(selection);
+
+    const selectionKey = selection.on('select', (event) => {
+      const feature = event.selected[0];
+      if (!feature) {
+        setSelectedFeatureId(null);
+        return;
+      }
+      const id = String(feature.getId() ?? 'draft-feature');
+      setSelectedFeatureId(id);
+      const geometry = feature.getGeometry();
+      if (geometry instanceof Point) {
+        const [lng, lat] = toLonLat(geometry.getCoordinates());
+        setLongitude(formatCoordinate(lng));
+        setLatitude(formatCoordinate(lat));
+      }
+    });
+    eventKeysRef.current.push(selectionKey);
+
+    const clickKey = map.on('singleclick', (event) => {
+      const [lng, lat] = toLonLat(event.coordinate);
+      setLastClickedCoordinate([lng, lat]);
+
+      const villageFeature = map.forEachFeatureAtPixel(
+        event.pixel,
+        (feature) => feature,
+        { layerFilter: (layer) => layer === villageLayer },
+      );
+      if (villageFeature) {
+        const code = villageFeature.get('villageCode');
+        if (typeof code === 'string') {
+          const current = mapStateRef.current.selectedVillageCode;
+          mapStateRef.current.setSelectedVillageCode(current === code ? null : code);
+          villageLayer.changed();
+        }
+      }
+    });
+    eventKeysRef.current.push(clickKey);
+
+    const updateFeatureCount = () =>
+      setEditableFeatureCount(editableSourceRef.current.getFeatures().length);
+    const addKey = editableSourceRef.current.on('addfeature', updateFeatureCount);
+    const removeKey = editableSourceRef.current.on('removefeature', updateFeatureCount);
+    const clearKey = editableSourceRef.current.on('clear', updateFeatureCount);
+    eventKeysRef.current.push(addKey, removeKey, clearKey);
+
+    const extent = communeSource.getExtent();
+    if (extent && extent.every(Number.isFinite)) {
+      map.getView().fit(extent, {
+        padding: [80, 80, 80, 80],
+        duration: 0,
+        maxZoom: 14,
+      });
+    }
+
+    setMapReady(true);
+
+    return () => {
+      activeEditorInteractionsRef.current.forEach((interaction) =>
+        map.removeInteraction(interaction),
+      );
+      eventKeysRef.current.forEach(unByKey);
+      eventKeysRef.current = [];
+      map.setTarget(undefined);
+      mapRef.current = null;
+      baseLayerRef.current = null;
+      villageLayerRef.current = null;
+      selectInteractionRef.current = null;
+      registry.clear();
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!mapReady) return;
+    const allowedLayerIds = new Set(
+      INITIAL_MAP_LAYERS.filter((layer) => {
+        if (layer.securityLevel === 'confidential') {
+          return ['admin', 'data_governance', 'commune_leader'].includes(
+            mapState.currentRole ?? '',
+          );
         }
         return true;
-      })
-      .map((l) => l.id);
-  }, [currentRole]);
+      }).map((layer) => layer.id),
+    );
+    layerRegistryRef.current.forEach((layer, id) => {
+      layer.setVisible(mapState.activeLayerIds.includes(id) && allowedLayerIds.has(id));
+    });
+  }, [mapReady, mapState.activeLayerIds, mapState.currentRole]);
 
-  const effectiveActiveLayerIds = activeLayerIds.filter((id) =>
-    allowedLayerIds.includes(id)
-  );
+  React.useEffect(() => {
+    if (!mapReady) return;
+    villageLayerRef.current?.changed();
+  }, [mapReady, mapState.selectedVillageCode]);
 
-  const activeBaseLayer = BASE_LAYERS.find((l) => l.id === activeBaseLayerId) ?? BASE_LAYERS[0];
+  React.useEffect(() => {
+    if (!mapReady || !baseLayerRef.current) return;
+    const config = BASE_LAYERS.find((item) => item.id === mapState.activeBaseLayerId);
+    if (config?.type === 'xyz' && config.url) {
+      baseLayerRef.current.setSource(
+        new XYZ({
+          url: config.url,
+          attributions: config.attribution,
+          maxZoom: config.maxZoom,
+          crossOrigin: 'anonymous',
+        }),
+      );
+      baseLayerRef.current.setVisible(true);
+    } else {
+      baseLayerRef.current.setVisible(false);
+      baseLayerRef.current.setSource(null);
+    }
+  }, [mapReady, mapState.activeBaseLayerId]);
 
-  // Filter POIs/facilities/zones by security (all public for now)
-  const visiblePois = MOCK_TOURISM_POIS.filter((p) => p.securityLevel === 'public');
-  const visibleFacilities = MOCK_PUBLIC_FACILITIES.filter((f) => f.securityLevel === 'public');
-  const visibleZones = MOCK_DISASTER_RISK_ZONES.filter((z) => z.securityLevel === 'public' || z.securityLevel === 'shared');
+  React.useEffect(() => {
+    const flyToCoords = mapState.flyToCoords;
+    const setFlyToCoords = mapState.setFlyToCoords;
+    if (!mapReady || !flyToCoords || !mapRef.current) return;
+    const [lat, lng] = flyToCoords;
+    mapRef.current.getView().animate({
+      center: fromLonLat([lng, lat]),
+      zoom: 16,
+      duration: 700,
+    });
+    setFlyToCoords(null);
+  }, [mapReady, mapState.flyToCoords, mapState.setFlyToCoords]);
 
-  const handleVillageClick = (code: string) => {
-    setSelectedVillageCode(selectedVillageCode === code ? null : code);
-  };
+  React.useEffect(() => {
+    if (!mapReady || !mapRef.current) return;
+    const map = mapRef.current;
+    activeEditorInteractionsRef.current.forEach((interaction) =>
+      map.removeInteraction(interaction),
+    );
+    activeEditorInteractionsRef.current = [];
+
+    const source = editableSourceRef.current;
+    const interactions: Array<Draw | Modify | Snap> = [];
+    if (editorMode === 'point' || editorMode === 'line' || editorMode === 'polygon') {
+      const draw = new Draw({
+        source,
+        type:
+          editorMode === 'point'
+            ? 'Point'
+            : editorMode === 'line'
+              ? 'LineString'
+              : 'Polygon',
+      });
+      draw.on('drawend', (event) => {
+        const id = `draft-${Date.now()}`;
+        event.feature.setId(id);
+        event.feature.setProperties({
+          name: `Đối tượng nháp ${source.getFeatures().length + 1}`,
+          status: 'draft',
+          createdAt: new Date().toISOString(),
+        });
+        const selectedFeatures = selectInteractionRef.current?.getFeatures();
+        selectedFeatures?.clear();
+        selectedFeatures?.push(event.feature);
+        setSelectedFeatureId(id);
+        setEditorMode('view');
+      });
+      interactions.push(draw, new Snap({ source }));
+    } else if (editorMode === 'modify') {
+      const selectedFeatures = selectInteractionRef.current?.getFeatures();
+      if (selectedFeatures) {
+        interactions.push(
+          new Modify({ features: selectedFeatures }),
+          new Snap({ source }),
+        );
+      }
+    }
+
+    interactions.forEach((interaction) => map.addInteraction(interaction));
+    activeEditorInteractionsRef.current = interactions;
+
+    return () => {
+      interactions.forEach((interaction) => map.removeInteraction(interaction));
+    };
+  }, [editorMode, mapReady]);
+
+  function parseManualCoordinates(): [number, number] | null {
+    const lng = Number(longitude);
+    const lat = Number(latitude);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+      setCoordinateError('Tọa độ phải là số hợp lệ.');
+      return null;
+    }
+    if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+      setCoordinateError('Tọa độ nằm ngoài phạm vi EPSG:4326.');
+      return null;
+    }
+    setCoordinateError(null);
+    return [lng, lat];
+  }
+
+  function addPointFromCoordinates() {
+    const coordinate = parseManualCoordinates();
+    if (!coordinate) return;
+    const id = `draft-${Date.now()}`;
+    const feature = createPointFeature(id, coordinate, {
+      name: `Điểm nhập tọa độ ${editableFeatureCount + 1}`,
+      status: 'draft',
+      createdAt: new Date().toISOString(),
+    });
+    editableSourceRef.current.addFeature(feature);
+    selectInteractionRef.current?.getFeatures().clear();
+    selectInteractionRef.current?.getFeatures().push(feature);
+    setSelectedFeatureId(id);
+    mapRef.current?.getView().animate({
+      center: fromLonLat(coordinate),
+      zoom: Math.max(mapRef.current.getView().getZoom() ?? 14, 16),
+      duration: 500,
+    });
+  }
+
+  function updateSelectedPoint() {
+    const coordinate = parseManualCoordinates();
+    if (!coordinate) return;
+    const feature = selectInteractionRef.current?.getFeatures().item(0);
+    const geometry = feature?.getGeometry();
+    if (!(geometry instanceof Point)) {
+      setCoordinateError('Hãy chọn một điểm nháp để cập nhật tọa độ.');
+      return;
+    }
+    geometry.setCoordinates(fromLonLat(coordinate));
+    feature?.set('updatedAt', new Date().toISOString());
+  }
+
+  function deleteSelectedFeature() {
+    const selection = selectInteractionRef.current?.getFeatures();
+    const feature = selection?.item(0);
+    if (!feature) return;
+    editableSourceRef.current.removeFeature(feature);
+    selection?.clear();
+    setSelectedFeatureId(null);
+  }
+
+  function clearEditableFeatures() {
+    editableSourceRef.current.clear();
+    selectInteractionRef.current?.getFeatures().clear();
+    setSelectedFeatureId(null);
+  }
+
+  function exportEditableGeoJson() {
+    const data = geoJsonFormat.writeFeaturesObject(editableSourceRef.current.getFeatures(), {
+      dataProjection: 'EPSG:4326',
+      featureProjection: 'EPSG:3857',
+      decimals: 7,
+    });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: 'application/geo+json',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `lao-bao-draft-${new Date().toISOString().slice(0, 10)}.geojson`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const editorButtons: Array<{
+    mode: EditorMode;
+    label: string;
+    icon: React.ElementType;
+  }> = [
+    { mode: 'view', label: 'Chọn', icon: MousePointer2 },
+    { mode: 'point', label: 'Vẽ điểm', icon: MapPinPlus },
+    { mode: 'line', label: 'Vẽ đường', icon: Route },
+    { mode: 'polygon', label: 'Vẽ vùng', icon: Pentagon },
+    { mode: 'modify', label: 'Sửa đỉnh', icon: Pencil },
+  ];
 
   return (
-    <>
-      {/* Leaflet CSS village label override */}
+    <div className="relative h-full min-h-[520px] w-full overflow-hidden bg-slate-100 dark:bg-slate-950">
+      <div ref={targetRef} className="h-full min-h-[520px] w-full" aria-label="Bản đồ GIS OpenLayers" />
+
+      <div className="absolute bottom-8 left-2.5 z-10 w-[min(23rem,calc(100%-1.25rem))] rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div>
+            <p className="text-[11px] font-bold text-foreground">Biên tập đối tượng (POC)</p>
+            <p className="text-[8px] text-muted-foreground">
+              {editableFeatureCount} đối tượng nháp · chưa lưu backend
+            </p>
+          </div>
+          {selectedFeatureId && (
+            <span className="max-w-32 truncate rounded bg-orange-500/10 px-1.5 py-0.5 font-mono text-[8px] text-orange-700 dark:text-orange-300">
+              {selectedFeatureId}
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-1">
+          {editorButtons.map(({ mode, label, icon: Icon }) => (
+            <Button
+              key={mode}
+              type="button"
+              size="xs"
+              variant={editorMode === mode ? 'default' : 'outline'}
+              onClick={() => setEditorMode(mode)}
+              className={cn('h-7 gap-1 px-2 text-[9px] shadow-none', editorMode === mode && 'border-primary')}
+              title={label}
+            >
+              <Icon className="size-3" />
+              <span className="hidden sm:inline">{label}</span>
+            </Button>
+          ))}
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={deleteSelectedFeature}
+            disabled={!selectedFeatureId}
+            className="h-7 gap-1 px-2 text-[9px] text-destructive shadow-none"
+            title="Xóa đối tượng đang chọn"
+          >
+            <Trash2 className="size-3" />
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={clearEditableFeatures}
+            disabled={editableFeatureCount === 0}
+            className="h-7 gap-1 px-2 text-[9px] shadow-none"
+            title="Xóa toàn bộ bản nháp"
+          >
+            <Eraser className="size-3" />
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={exportEditableGeoJson}
+            disabled={editableFeatureCount === 0}
+            className="h-7 gap-1 px-2 text-[9px] shadow-none"
+            title="Xuất GeoJSON"
+          >
+            <Download className="size-3" />
+          </Button>
+        </div>
+
+        <div className="mt-2 grid grid-cols-[1fr_1fr_auto_auto] gap-1">
+          <Input
+            value={longitude}
+            onChange={(event) => setLongitude(event.target.value)}
+            inputMode="decimal"
+            aria-label="Kinh độ"
+            placeholder="Kinh độ"
+            className="h-7 px-2 font-mono text-[9px] shadow-none"
+          />
+          <Input
+            value={latitude}
+            onChange={(event) => setLatitude(event.target.value)}
+            inputMode="decimal"
+            aria-label="Vĩ độ"
+            placeholder="Vĩ độ"
+            className="h-7 px-2 font-mono text-[9px] shadow-none"
+          />
+          <Button
+            type="button"
+            size="xs"
+            onClick={addPointFromCoordinates}
+            className="h-7 px-2 text-[9px]"
+            title="Thêm điểm theo tọa độ"
+          >
+            <MapPinPlus className="size-3" />
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={updateSelectedPoint}
+            disabled={!selectedFeatureId}
+            className="h-7 px-2 text-[9px]"
+            title="Cập nhật tọa độ điểm đang chọn"
+          >
+            <Check className="size-3" />
+          </Button>
+        </div>
+        {coordinateError ? (
+          <p className="mt-1 text-[8px] font-medium text-destructive">{coordinateError}</p>
+        ) : lastClickedCoordinate ? (
+          <p className="mt-1 text-[8px] text-muted-foreground">
+            Vị trí vừa chọn: {formatCoordinate(lastClickedCoordinate[0])},{' '}
+            {formatCoordinate(lastClickedCoordinate[1])}
+          </p>
+        ) : null}
+      </div>
+
       <style>{`
-        .village-label-tooltip {
-          background: transparent !important;
-          border: none !important;
-          box-shadow: none !important;
-          font-size: 10px;
-          font-weight: 700;
-          color: #1e293b;
-          white-space: nowrap;
-          text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
-          pointer-events: none;
+        .ol-zoom {
+          top: auto;
+          right: 0.75rem;
+          bottom: 2.5rem;
+          left: auto;
         }
-        .village-label-tooltip::before {
-          display: none !important;
+        .ol-attribution {
+          right: 0;
+          bottom: 0;
+          max-width: min(70vw, 36rem);
+          font-size: 9px;
         }
-        .dark .village-label-tooltip {
-          color: #f8fafc;
-          text-shadow: 0 0 3px #0f172a, 0 0 3px #0f172a;
+        .ol-control button {
+          background: color-mix(in srgb, var(--card) 92%, transparent);
+          color: var(--foreground);
+          cursor: pointer;
+        }
+        .ol-control button:hover,
+        .ol-control button:focus {
+          background: var(--primary);
+          color: var(--primary-foreground);
+        }
+        .ol-scale-line {
+          bottom: 0.5rem;
         }
       `}</style>
-
-      <MapContainer
-        center={[LAOBAO_CENTER.lat, LAOBAO_CENTER.lng]}
-        zoom={LAOBAO_CENTER.zoom}
-        zoomControl={false}
-        className="w-full h-full z-0"
-        style={{ minHeight: '520px' }}
-      >
-        <MapController
-          flyToCoords={flyToCoords}
-          clearFlyTo={() => setFlyToCoords(null)}
-          fitBoundsOnMount
-        />
-
-        {/* Base tile layer */}
-        <TileLayer
-          key={activeBaseLayer.id}
-          url={activeBaseLayer.url}
-          attribution={activeBaseLayer.attribution}
-          maxZoom={activeBaseLayer.maxZoom}
-        />
-
-        <ZoomControl position="bottomright" />
-
-        {/* ── Layer: Commune boundary ── */}
-        {effectiveActiveLayerIds.includes('layer-commune') && (
-          <GeoJSON
-            data={MOCK_LAOBAO_COMMUNE_BOUNDARY}
-            style={() => COMMUNE_BOUNDARY_STYLE}
-            onEachFeature={(feature, layer) => {
-              const p = feature.properties ?? {};
-              layer.bindPopup(`
-                <div style="font-family:system-ui,sans-serif;font-size:11px;min-width:190px;line-height:1.6;">
-                  <h4 style="font-weight:700;font-size:14px;color:#1e293b;margin:0 0 6px 0;">Xã Lao Bảo</h4>
-                  <div style="display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin-bottom:8px;">
-                    <span style="color:#64748b;">Tỉnh</span><span style="font-weight:600;">Quảng Trị</span>
-                    <span style="color:#64748b;">Diện tích</span><span style="font-weight:600;">${Number(p.areaHa).toLocaleString('vi-VN')} ha</span>
-                    <span style="color:#64748b;">Dân số</span><span style="font-weight:600;">${Number(p.population).toLocaleString('vi-VN')} người</span>
-                    <span style="color:#64748b;">Số hộ</span><span style="font-weight:600;">${Number(p.householdCount).toLocaleString('vi-VN')} hộ</span>
-                    <span style="color:#64748b;">Số thôn</span><span style="font-weight:600;">12 thôn</span>
-                  </div>
-                  <div style="font-size:8px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:6px;">
-                    ⚠ Ranh giới mô phỏng — không có giá trị pháp lý
-                  </div>
-                </div>
-              `);
-            }}
-          />
-        )}
-
-        {/* ── Layer: Village boundaries ── */}
-        <VillageBoundaryLayer
-          data={MOCK_VILLAGE_BOUNDARIES}
-          visible={effectiveActiveLayerIds.includes('layer-villages')}
-          labelsVisible={effectiveActiveLayerIds.includes('layer-village-labels')}
-          selectedVillageCode={selectedVillageCode}
-          onVillageClick={handleVillageClick}
-        />
-
-        {/* ── Layer: Tourism POIs ── */}
-        <PoiLayer
-          pois={visiblePois}
-          visible={effectiveActiveLayerIds.includes('layer-tourism')}
-        />
-
-        {/* ── Layers: Public facilities (health, education, cultural, admin) ── */}
-        <PublicFacilityLayer
-          facilities={visibleFacilities}
-          activeLayerIds={effectiveActiveLayerIds}
-        />
-
-        {/* ── Layers: Disaster risk zones ── */}
-        <DisasterRiskLayer
-          zones={visibleZones}
-          activeLayerIds={effectiveActiveLayerIds}
-        />
-      </MapContainer>
-    </>
+    </div>
   );
 }

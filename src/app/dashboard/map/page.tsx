@@ -4,10 +4,8 @@
 'use client';
 
 import * as React from 'react';
-import { Compass, ShieldAlert } from 'lucide-react';
-import { PageHeader } from '@/components/common';
+import { ShieldAlert } from 'lucide-react';
 import { MapShell } from '@/components/map/map-shell';
-import { MapSummary } from './components/map-summary';
 import { MapToolbar } from './components/map-toolbar';
 import { MapLayerPanel } from './components/map-layer-panel';
 import { MapLegend } from './components/map-legend';
@@ -160,7 +158,7 @@ export default function MapPage() {
         />
       </div>
 
-      {/* ── Mock data disclaimer — bottom right overlaying Leaflet attribution ── */}
+      {/* ── Mock data disclaimer ── */}
       <div className="absolute bottom-0 right-0 z-1000 flex items-center gap-1.5 px-2 py-1.5 rounded-tl-lg bg-background/90 backdrop-blur-xs border-t border-l border-border/80 shadow-sm">
         <ShieldAlert className="size-3 text-amber-500 shrink-0" />
         <p className="text-[8px] text-muted-foreground leading-none">

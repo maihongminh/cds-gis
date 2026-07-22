@@ -8,7 +8,7 @@ import { MapLoading } from './map-loading';
 import { MapErrorBoundary } from './map-error-boundary';
 import type { MapState } from './map-client';
 
-// Dynamic import — Leaflet requires browser globals, must be ssr:false
+// Dynamic import keeps the GIS engine out of the initial dashboard bundle.
 const MapClient = dynamic<{ mapState: MapState }>(
   () => import('./map-client').then((m) => ({ default: m.default })),
   {
