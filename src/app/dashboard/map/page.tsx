@@ -13,7 +13,7 @@ import { DisasterAlertPanel } from './components/disaster-alert-panel';
 import { INITIAL_MAP_LAYERS, GIS_LAYER_GROUPS } from '@/data/mock-map-layers';
 import { useTenant } from '@/components/layout/tenant-context';
 import type { MapState } from '@/components/map/map-client';
-import { BASE_LAYERS, LAOBAO_CENTER } from '@/lib/map-config';
+import { DEFAULT_BASE_LAYER_ID, LAOBAO_CENTER } from '@/lib/map-config';
 
 /** Commune center for "fit all" button */
 const COMMUNE_CENTER: [number, number] = [LAOBAO_CENTER.lat, LAOBAO_CENTER.lng];
@@ -59,7 +59,7 @@ export default function MapPage() {
   const [flyToCoords, setFlyToCoords] = React.useState<
     [number, number, number?] | null
   >(null);
-  const [activeBaseLayerId, setActiveBaseLayerId] = React.useState(BASE_LAYERS[0].id);
+  const [activeBaseLayerId, setActiveBaseLayerId] = React.useState(DEFAULT_BASE_LAYER_ID);
 
   // ── UI state ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -161,7 +161,7 @@ export default function MapPage() {
       <div className="absolute bottom-0 right-0 z-1000 flex items-center gap-1.5 px-2 py-1.5 rounded-tl-lg bg-background/90 backdrop-blur-xs border-t border-l border-border/80 shadow-sm">
         <ShieldAlert className="size-3 text-amber-500 shrink-0" />
         <p className="text-[8px] text-muted-foreground leading-none">
-          Ranh giới xã/thôn là dữ liệu mô phỏng. Hoàng Sa, Trường Sa là điểm tham chiếu theo nguồn công bố, không phải ranh giới biển pháp lý. Hệ quy chiếu: EPSG:4326
+          Ranh giới xã/thôn nghiệp vụ là dữ liệu mô phỏng. Nền hành chính và dữ liệu Hoàng Sa, Trường Sa được tải từ gis.vn; không dùng thay hồ sơ pháp lý. Hệ quy chiếu: EPSG:4326
         </p>
       </div>
     </div>

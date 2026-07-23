@@ -21,12 +21,14 @@ export const VIETNAM_CENTER: MapCenter = {
 export interface TileLayerConfig {
   id: string;
   name: string;
-  type: 'blank' | 'style' | 'xyz';
+  type: 'administrative' | 'blank' | 'style' | 'xyz';
   url?: string;
   overlayUrl?: string;
   attribution: string;
   description?: string;
   maxZoom?: number;
+  viewMaxZoom?: number;
+  preload?: number;
   status: 'imagery-only' | 'safe-default' | 'requires-review';
 }
 
@@ -74,12 +76,34 @@ const externalBasemaps: TileLayerConfig[] = [
   ...vietMapBasemaps,
   {
     id: 'arcgis-streets',
-    name: 'Đường phố',
+    name: 'Đường phố Esri',
     type: 'xyz',
     url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
     description: 'Nền đường phố tương tự lựa chọn trên gis.vn',
-    maxZoom: 19,
+    maxZoom: 17,
+    viewMaxZoom: 17,
+    status: 'requires-review',
+  },
+  {
+    id: 'carto-voyager',
+    name: 'Đường phố CARTO',
+    type: 'xyz',
+    url: 'https://{a-d}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    description: 'Nền Voyager sáng, rõ đường và công trình, tải qua CDN của CARTO',
+    maxZoom: 20,
+    preload: 0,
+    status: 'requires-review',
+  },
+  {
+    id: 'gis-vn-administrative',
+    name: 'Hành chính',
+    type: 'administrative',
+    attribution: 'Dữ liệu hành chính &copy; gis.vn',
+    description: '34 tỉnh và 3.321 phường/xã sau sắp xếp, tải chi tiết theo vùng đang xem',
+    maxZoom: 20,
     status: 'requires-review',
   },
   {
@@ -139,8 +163,8 @@ const externalBasemaps: TileLayerConfig[] = [
 ];
 
 /**
- * ArcGIS street is the no-key default, with the same ArcGIS basemap family used
- * by gis.vn. A configured VietMap or custom XYZ source takes priority.
+ * Esri street remains the default no-key basemap. A configured custom XYZ
+ * source is listed first so deployments can explicitly select an approved map.
  */
 export const BASE_LAYERS: TileLayerConfig[] = [
   ...(configuredBasemapUrl
@@ -167,6 +191,8 @@ export const BASE_LAYERS: TileLayerConfig[] = [
     status: 'safe-default',
   },
 ];
+
+export const DEFAULT_BASE_LAYER_ID = 'arcgis-streets';
 
 export const MAP_METADATA = {
   sourceCrs: 'VN-2000',

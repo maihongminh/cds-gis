@@ -22,6 +22,7 @@ import VectorSource from 'ol/source/Vector';
 import XYZ from 'ol/source/XYZ';
 import CircleStyle from 'ol/style/Circle';
 import Fill from 'ol/style/Fill';
+import IconStyle from 'ol/style/Icon';
 import Stroke from 'ol/style/Stroke';
 import Style from 'ol/style/Style';
 import Text from 'ol/style/Text';
@@ -49,9 +50,15 @@ import { INITIAL_MAP_LAYERS } from '@/data/mock-map-layers';
 import { MOCK_PUBLIC_FACILITIES } from '@/data/mock-map-public-facilities';
 import { MOCK_TOURISM_POIS } from '@/data/mock-map-tourism-pois';
 import { MOCK_CURRENT_STATE, MOCK_PLANNED_STATE } from '@/data/mock-map-scenarios';
-import { VIETNAM_SOVEREIGNTY_REFERENCES } from '@/data/vietnam-sovereignty-reference';
 import { BASE_LAYERS, LAOBAO_CENTER } from '@/lib/map-config';
+import {
+  buildIconPinMarkerSvg,
+  FACILITY_COLORS,
+  TOURISM_POI_COLORS,
+  type MapMarkerIconName,
+} from '@/lib/map-style-config';
 import { cn } from '@/lib/utils';
+import type { PublicFacilityType, TourismPoiType } from '@/types/map';
 
 export interface MapState {
   activeLayerIds: string[];
@@ -94,14 +101,68 @@ function createPointFeature(
   return feature;
 }
 
-function pointStyle(color: string, radius = 6) {
-  return new Style({
-    image: new CircleStyle({
-      radius,
-      fill: new Fill({ color }),
-      stroke: new Stroke({ color: '#ffffff', width: 2 }),
-    }),
+const markerImageCache = new globalThis.Map<string, IconStyle>();
+const markerStyleCache = new globalThis.Map<string, Style>();
+
+function markerImage(color: string, icon: MapMarkerIconName, size = 30) {
+  const cacheKey = `${color}:${icon}:${size}`;
+  const cachedImage = markerImageCache.get(cacheKey);
+  if (cachedImage) return cachedImage;
+
+  const svg = buildIconPinMarkerSvg(color, icon, size);
+  const image = new IconStyle({
+    src: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    anchor: [0.5, 1],
+    anchorXUnits: 'fraction',
+    anchorYUnits: 'fraction',
   });
+  markerImageCache.set(cacheKey, image);
+  return image;
+}
+
+function markerStyle(color: string, icon: MapMarkerIconName, size = 30) {
+  const cacheKey = `${color}:${icon}:${size}`;
+  const cachedStyle = markerStyleCache.get(cacheKey);
+  if (cachedStyle) return cachedStyle;
+
+  const style = new Style({ image: markerImage(color, icon, size) });
+  markerStyleCache.set(cacheKey, style);
+  return style;
+}
+
+const tourismMarkerIcons: Record<TourismPoiType, MapMarkerIconName> = {
+  tourist_attraction: 'attraction',
+  historical_site: 'landmark',
+  scenic_spot: 'mountain',
+  check_in: 'camera',
+  local_product_point: 'market',
+};
+
+function tourismMarkerStyle(feature: FeatureLike) {
+  const tourismType = feature.get('tourismType') as TourismPoiType;
+  return markerStyle(
+    TOURISM_POI_COLORS[tourismType] ?? '#8b5cf6',
+    tourismMarkerIcons[tourismType] ?? 'attraction',
+  );
+}
+
+const facilityMarkerIcons: Record<PublicFacilityType, MapMarkerIconName> = {
+  health_station: 'medical',
+  school: 'school',
+  cultural_house: 'landmark',
+  administrative_office: 'building',
+  market: 'market',
+  sports_facility: 'sports',
+  water_facility: 'water',
+  public_infrastructure: 'infrastructure',
+};
+
+function facilityMarkerStyle(feature: FeatureLike) {
+  const facilityType = feature.get('facilityType') as PublicFacilityType;
+  return markerStyle(
+    FACILITY_COLORS[facilityType] ?? '#64748b',
+    facilityMarkerIcons[facilityType] ?? 'building',
+  );
 }
 
 const communeStyle = new Style({
@@ -142,29 +203,92 @@ function villageLabelStyle(feature: FeatureLike) {
 const sovereigntyStyleCache = new globalThis.Map<string, Style>();
 
 function sovereigntyReferenceStyle(feature: FeatureLike) {
-  const cacheKey = String(feature.getId() ?? feature.get('name') ?? 'sovereignty');
+  const geometryType = feature.getGeometry()?.getType() ?? 'unknown';
+  const cacheKey = `${geometryType}:${String(feature.getId() ?? feature.get('name') ?? 'sovereignty')}`;
   const cachedStyle = sovereigntyStyleCache.get(cacheKey);
   if (cachedStyle) return cachedStyle;
 
-  const style = new Style({
-    image: new CircleStyle({
-      radius: 7,
-      fill: new Fill({ color: '#dc2626' }),
-      stroke: new Stroke({ color: '#facc15', width: 3 }),
-    }),
-    text: new Text({
-      text: String(feature.get('label') ?? feature.get('name') ?? ''),
-      font: '700 12px var(--font-be-vietnam-pro), sans-serif',
-      offsetY: -25,
-      textAlign: 'center',
-      padding: [3, 5, 3, 5],
-      fill: new Fill({ color: '#b91c1c' }),
-      stroke: new Stroke({ color: 'rgba(255,255,255,0.98)', width: 4 }),
-      backgroundFill: new Fill({ color: 'rgba(255,255,255,0.84)' }),
-      backgroundStroke: new Stroke({ color: 'rgba(220,38,38,0.5)', width: 1 }),
-    }),
-  });
+  const style = geometryType === 'Point'
+    ? new Style({
+        image: markerImage('#dc2626', 'flag', 32),
+        text: new Text({
+          text: String(feature.get('label') ?? feature.get('name') ?? ''),
+          font: '700 12px var(--font-be-vietnam-pro), sans-serif',
+          offsetY: -44,
+          textAlign: 'center',
+          padding: [3, 5, 3, 5],
+          fill: new Fill({ color: '#b91c1c' }),
+          stroke: new Stroke({ color: 'rgba(255,255,255,0.98)', width: 4 }),
+          backgroundFill: new Fill({ color: 'rgba(255,255,255,0.84)' }),
+          backgroundStroke: new Stroke({ color: 'rgba(220,38,38,0.5)', width: 1 }),
+        }),
+      })
+    : new Style({
+        stroke: new Stroke({ color: '#dc2626', width: 1.5 }),
+        fill: new Fill({ color: 'rgba(239,68,68,0.16)' }),
+      });
   sovereigntyStyleCache.set(cacheKey, style);
+  return style;
+}
+
+const administrativePalette = [
+  '#bfdbfe',
+  '#bbf7d0',
+  '#fde68a',
+  '#ddd6fe',
+  '#fecdd3',
+  '#bae6fd',
+  '#fed7aa',
+] as const;
+const administrativeProvinceStyleCache = new globalThis.Map<string, Style>();
+const administrativeCommuneStyleCache = new globalThis.Map<string, Style>();
+
+function administrativeProvinceStyle(feature: FeatureLike, resolution: number) {
+  const provinceCode = String(feature.get('provinceCode') ?? '0');
+  const showLabel = resolution >= 250;
+  const cacheKey = `${provinceCode}:${showLabel ? 'label' : 'shape'}`;
+  const cachedStyle = administrativeProvinceStyleCache.get(cacheKey);
+  if (cachedStyle) return cachedStyle;
+
+  const paletteIndex = Number.parseInt(provinceCode, 10) % administrativePalette.length;
+  const style = new Style({
+    stroke: new Stroke({ color: '#475569', width: 1.2 }),
+    fill: new Fill({ color: `${administrativePalette[paletteIndex]}cc` }),
+    text: showLabel
+      ? new Text({
+          text: String(feature.get('name') ?? ''),
+          font: '700 11px var(--font-be-vietnam-pro), sans-serif',
+          overflow: false,
+          fill: new Fill({ color: '#0f172a' }),
+          stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
+        })
+      : undefined,
+  });
+  administrativeProvinceStyleCache.set(cacheKey, style);
+  return style;
+}
+
+function administrativeCommuneStyle(feature: FeatureLike, resolution: number) {
+  const communeCode = String(feature.get('communeCode') ?? 'unknown');
+  const showLabel = resolution <= 180;
+  const cacheKey = `${communeCode}:${showLabel ? 'label' : 'shape'}`;
+  const cachedStyle = administrativeCommuneStyleCache.get(cacheKey);
+  if (cachedStyle) return cachedStyle;
+
+  const style = new Style({
+    stroke: new Stroke({ color: 'rgba(71,85,105,0.8)', width: 0.8 }),
+    fill: new Fill({ color: 'rgba(255,255,255,0.08)' }),
+    text: showLabel
+      ? new Text({
+          text: String(feature.get('name') ?? ''),
+          font: '600 10px var(--font-be-vietnam-pro), sans-serif',
+          overflow: false,
+          fill: new Fill({ color: '#334155' }),
+          stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
+        })
+      : undefined,
+  });
+  administrativeCommuneStyleCache.set(cacheKey, style);
   return style;
 }
 
@@ -210,17 +334,17 @@ function riskStyle(feature: FeatureLike) {
         : level === 'medium'
           ? '#f97316'
           : '#eab308';
+  const geometryType = feature.getGeometry()?.getType() ?? 'unknown';
+  if (geometryType === 'Point') {
+    return markerStyle(color, 'warning', 32);
+  }
+
   const cachedStyle = riskStyleCache.get(color);
   if (cachedStyle) return cachedStyle;
 
   const style = new Style({
     stroke: new Stroke({ color, width: 2 }),
     fill: new Fill({ color: `${color}38` }),
-    image: new CircleStyle({
-      radius: 7,
-      fill: new Fill({ color }),
-      stroke: new Stroke({ color: '#fff', width: 2 }),
-    }),
   });
   riskStyleCache.set(color, style);
   return style;
@@ -268,7 +392,9 @@ export default function MapClient({ mapState }: MapClientProps) {
   const baseLayerRef = React.useRef<TileLayer<XYZ> | null>(null);
   const baseOverlayLayerRef = React.useRef<TileLayer<XYZ> | null>(null);
   const styledBaseLayerRef = React.useRef<LayerGroup | null>(null);
+  const administrativeBaseLayerRef = React.useRef<LayerGroup | null>(null);
   const styledBaseLayerUrlRef = React.useRef<string | null>(null);
+  const loadVisibleAdministrativeCommunesRef = React.useRef<() => void>(() => {});
   const graticuleRef = React.useRef<Graticule | null>(null);
   const tileSourceCacheRef = React.useRef(new globalThis.Map<string, XYZ>());
   const layerRegistryRef = React.useRef(new globalThis.Map<string, VectorLayer>());
@@ -313,6 +439,40 @@ export default function MapClient({ mapState }: MapClientProps) {
     const styledBaseLayer = new LayerGroup({ visible: false, zIndex: 0 });
     styledBaseLayerRef.current = styledBaseLayer;
 
+    const administrativeProvinceSource = new VectorSource({
+      url: '/gis-source/vietnam-administrative?level=provinces',
+      format: new GeoJSON(),
+      attributions: 'Dữ liệu hành chính &copy; gis.vn',
+      wrapX: false,
+    });
+    const administrativeCommuneSource = new VectorSource({ wrapX: false });
+    const administrativeProvinceLayer = new VectorLayer({
+      source: administrativeProvinceSource,
+      background: '#dbeafe',
+      declutter: 'administrative-labels',
+      renderBuffer: 32,
+      style: administrativeProvinceStyle,
+      updateWhileAnimating: false,
+      updateWhileInteracting: false,
+      zIndex: 0,
+    });
+    const administrativeCommuneLayer = new VectorLayer({
+      source: administrativeCommuneSource,
+      declutter: 'administrative-labels',
+      minZoom: 8,
+      renderBuffer: 32,
+      style: administrativeCommuneStyle,
+      updateWhileAnimating: false,
+      updateWhileInteracting: false,
+      zIndex: 1,
+    });
+    const administrativeBaseLayer = new LayerGroup({
+      layers: [administrativeProvinceLayer, administrativeCommuneLayer],
+      visible: false,
+      zIndex: 0,
+    });
+    administrativeBaseLayerRef.current = administrativeBaseLayer;
+
     const communeSource = new VectorSource({
       features: readGeoJsonFeatures(MOCK_LAOBAO_COMMUNE_BOUNDARY),
     });
@@ -346,9 +506,8 @@ export default function MapClient({ mapState }: MapClientProps) {
 
     const sovereigntyLayer = new VectorLayer({
       source: new VectorSource({
-        features: VIETNAM_SOVEREIGNTY_REFERENCES.map((reference) =>
-          createPointFeature(reference.id, reference.coordinates, { ...reference }),
-        ),
+        url: '/gis-source/vietnam-islands',
+        format: new GeoJSON(),
         wrapX: false,
       }),
       declutter: true,
@@ -363,33 +522,31 @@ export default function MapClient({ mapState }: MapClientProps) {
           createPointFeature(poi.id, poi.coordinates, {
             name: poi.name,
             kind: 'tourism',
+            tourismType: poi.type,
             villageName: poi.villageName,
           }),
         ),
       }),
-      style: pointStyle('#8b5cf6', 7),
+      renderBuffer: 48,
+      style: tourismMarkerStyle,
       zIndex: 60,
     });
 
     const facilityDefinitions = [
       {
         id: 'layer-health',
-        color: '#10b981',
         matches: (type: string) => type === 'health_station',
       },
       {
         id: 'layer-education',
-        color: '#f59e0b',
         matches: (type: string) => type === 'school',
       },
       {
         id: 'layer-cultural',
-        color: '#3b82f6',
         matches: (type: string) => type === 'cultural_house',
       },
       {
         id: 'layer-admin-offices',
-        color: '#6366f1',
         matches: (type: string) =>
           [
             'administrative_office',
@@ -416,7 +573,8 @@ export default function MapClient({ mapState }: MapClientProps) {
             }),
           ),
         }),
-        style: pointStyle(definition.color, 7),
+        renderBuffer: 48,
+        style: facilityMarkerStyle,
         zIndex: 70 + index,
       }),
     }));
@@ -480,6 +638,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         baseLayer,
         baseOverlayLayer,
         styledBaseLayer,
+        administrativeBaseLayer,
         graticule,
         ...registeredLayers.map(([, layer]) => layer),
         editableLayer,
@@ -494,6 +653,79 @@ export default function MapClient({ mapState }: MapClientProps) {
       pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
     });
     mapRef.current = map;
+
+    const loadedAdministrativeProvinceIds = new Set<string>();
+    const loadingAdministrativeProvinceIds = new Set<string>();
+    const administrativeFetchControllers = new Set<AbortController>();
+
+    const loadVisibleAdministrativeCommunes = () => {
+      if (
+        mapStateRef.current.activeBaseLayerId !== 'gis-vn-administrative' ||
+        (map.getView().getZoom() ?? 0) < 8
+      ) {
+        return;
+      }
+
+      const visibleProvinceIds = Array.from(
+        new Set(
+          administrativeProvinceSource
+            .getFeaturesInExtent(map.getView().calculateExtent(map.getSize()))
+            .map((feature) => feature.get('provinceCode'))
+            .filter((value): value is string => typeof value === 'string'),
+        ),
+      ).slice(0, 6);
+
+      visibleProvinceIds.forEach((provinceCode) => {
+        if (
+          loadedAdministrativeProvinceIds.has(provinceCode) ||
+          loadingAdministrativeProvinceIds.has(provinceCode)
+        ) {
+          return;
+        }
+
+        loadingAdministrativeProvinceIds.add(provinceCode);
+        const controller = new AbortController();
+        administrativeFetchControllers.add(controller);
+
+        void fetch(
+          `/gis-source/vietnam-administrative?level=communes&province=${encodeURIComponent(provinceCode)}`,
+          { signal: controller.signal },
+        )
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            return response.json() as Promise<object>;
+          })
+          .then((data) => {
+            const features = readGeoJsonFeatures(data);
+            administrativeCommuneSource.addFeatures(features);
+            loadedAdministrativeProvinceIds.add(provinceCode);
+          })
+          .catch((error: unknown) => {
+            if (!controller.signal.aborted) {
+              console.warn(
+                `Không thể tải ranh giới xã thuộc tỉnh ${provinceCode}`,
+                error,
+              );
+            }
+          })
+          .finally(() => {
+            loadingAdministrativeProvinceIds.delete(provinceCode);
+            administrativeFetchControllers.delete(controller);
+          });
+      });
+    };
+    loadVisibleAdministrativeCommunesRef.current = loadVisibleAdministrativeCommunes;
+    const administrativeMoveKey = map.on(
+      'moveend',
+      loadVisibleAdministrativeCommunes,
+    );
+    const administrativeProvinceLoadKey = administrativeProvinceSource.on(
+      'featuresloadend',
+      loadVisibleAdministrativeCommunes,
+    );
+    eventKeysRef.current.push(administrativeMoveKey, administrativeProvinceLoadKey);
 
     const selection = new Select({
       layers: [editableLayer],
@@ -561,6 +793,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       activeEditorInteractionsRef.current.forEach((interaction) =>
         map.removeInteraction(interaction),
       );
+      administrativeFetchControllers.forEach((controller) => controller.abort());
       eventKeysRef.current.forEach(unByKey);
       eventKeysRef.current = [];
       map.setTarget(undefined);
@@ -568,7 +801,9 @@ export default function MapClient({ mapState }: MapClientProps) {
       baseLayerRef.current = null;
       baseOverlayLayerRef.current = null;
       styledBaseLayerRef.current = null;
+      administrativeBaseLayerRef.current = null;
       styledBaseLayerUrlRef.current = null;
+      loadVisibleAdministrativeCommunesRef.current = () => {};
       graticuleRef.current = null;
       tileSourceCache.clear();
       villageLayerRef.current = null;
@@ -604,17 +839,33 @@ export default function MapClient({ mapState }: MapClientProps) {
       !mapReady ||
       !baseLayerRef.current ||
       !baseOverlayLayerRef.current ||
-      !styledBaseLayerRef.current
+      !styledBaseLayerRef.current ||
+      !administrativeBaseLayerRef.current
     )
       return;
     const config = BASE_LAYERS.find((item) => item.id === mapState.activeBaseLayerId);
+    const view = mapRef.current?.getView();
+    const viewMaxZoom = config?.viewMaxZoom ?? 20;
+    view?.setMaxZoom(viewMaxZoom);
+    if ((view?.getZoom() ?? 0) > viewMaxZoom) {
+      view?.cancelAnimations();
+      view?.setZoom(viewMaxZoom);
+    }
     const tileLayer = baseLayerRef.current;
     const overlayLayer = baseOverlayLayerRef.current;
     const styledLayer = styledBaseLayerRef.current;
+    const administrativeLayer = administrativeBaseLayerRef.current;
     tileLayer.setVisible(false);
     overlayLayer.setVisible(false);
     styledLayer.setVisible(false);
+    administrativeLayer.setVisible(false);
     graticuleRef.current?.setVisible(config?.type === 'blank');
+
+    if (config?.type === 'administrative') {
+      administrativeLayer.setVisible(true);
+      loadVisibleAdministrativeCommunesRef.current();
+      return;
+    }
 
     if (config?.type === 'style' && config.url) {
       const styleUrl = config.url;
@@ -634,6 +885,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     }
 
     if (config?.type === 'xyz' && config.url) {
+      tileLayer.setPreload(config.preload ?? 1);
       const sourceCache = tileSourceCacheRef.current;
       const sourceKey = `${config.id}:base`;
       let tileSource = sourceCache.get(sourceKey);
@@ -959,7 +1211,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         }
         .ol-attribution {
           right: 0;
-          bottom: 0;
+          bottom: 1.75rem;
           max-width: min(70vw, 36rem);
           font-size: 9px;
         }

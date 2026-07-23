@@ -16,7 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui';
-import { Home, Layers, MapPinned } from 'lucide-react';
+import { Home, Layers, Map as MapIcon, MapPinned } from 'lucide-react';
 import { VILLAGES, COMMUNE } from '@/data/laobao-administrative-units';
 import { BASE_LAYERS, VIETNAM_CENTER } from '@/lib/map-config';
 import type { MapState } from '@/components/map/map-client';
@@ -65,7 +65,7 @@ export function MapToolbar({
     <TooltipProvider delayDuration={300}>
       <div
         className={cn(
-          'flex items-center gap-1.5 flex-wrap p-1.5 rounded-lg border border-border/60 bg-card/95 backdrop-blur-sm shadow-sm',
+          'flex items-center gap-1.5 flex-nowrap overflow-hidden p-1.5 rounded-lg border border-border/60 bg-card/95 backdrop-blur-sm shadow-sm',
           className
         )}
       >
@@ -128,30 +128,27 @@ export function MapToolbar({
         <div className="flex-1" />
 
         {/* Base layer switcher */}
-        <div className="hidden sm:flex items-center gap-1 border-r border-border/50 pr-2">
-          {BASE_LAYERS.map((layer) => (
-            <Tooltip key={layer.id}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setActiveBaseLayerId(layer.id)}
-                  className={cn(
-                    'h-7 px-2 text-[10px] font-medium rounded-md border transition-colors cursor-pointer',
-                    activeBaseLayerId === layer.id
-                      ? 'bg-primary/10 text-primary border-primary/30'
-                      : 'text-muted-foreground border-border hover:bg-muted hover:text-foreground'
-                  )}
-                  aria-label={`Bản đồ nền: ${layer.name}`}
-                >
-                  {layer.name}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {layer.description ?? layer.name}
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
+        <Select value={activeBaseLayerId} onValueChange={setActiveBaseLayerId}>
+          <SelectTrigger
+            className="h-8 w-48 shrink-0 cursor-pointer border-border bg-background text-xs shadow-none sm:w-56"
+            aria-label="Chọn bản đồ nền"
+          >
+            <MapIcon className="size-3.5 shrink-0 text-primary" />
+            <SelectValue placeholder="Chọn bản đồ nền" />
+          </SelectTrigger>
+          <SelectContent align="end" className="border-border bg-card text-xs">
+            {BASE_LAYERS.map((layer) => (
+              <SelectItem
+                key={layer.id}
+                value={layer.id}
+                className="cursor-pointer"
+                title={layer.description}
+              >
+                {layer.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {/* Layer panel toggle */}
         <Tooltip>
@@ -160,7 +157,7 @@ export function MapToolbar({
               variant={isLayerPanelOpen ? 'default' : 'outline'}
               size="sm"
               onClick={onToggleLayerPanel}
-              className="h-8 px-2.5 gap-1.5 text-xs border-border shadow-none cursor-pointer border!"
+              className="h-8 shrink-0 px-2.5 gap-1.5 text-xs border-border shadow-none cursor-pointer border!"
               aria-label="Bật/tắt bảng điều khiển lớp"
             >
               <Layers className="size-3.5" />
