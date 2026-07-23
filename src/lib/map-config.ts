@@ -98,6 +98,17 @@ const externalBasemaps: TileLayerConfig[] = [
     status: 'requires-review',
   },
   {
+    id: 'openfreemap-liberty',
+    name: 'Bản đồ Liberty',
+    type: 'style',
+    url: '/gis-source/openfreemap-liberty-style?v=3',
+    attribution:
+      'OpenFreeMap &copy; OpenMapTiles Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    description: 'Nền vector Liberty với nhãn vùng biển đã được Việt hóa',
+    maxZoom: 20,
+    status: 'requires-review',
+  },
+  {
     id: 'gis-vn-administrative',
     name: 'Hành chính',
     type: 'administrative',
@@ -192,7 +203,7 @@ export const BASE_LAYERS: TileLayerConfig[] = [
   },
 ];
 
-export const DEFAULT_BASE_LAYER_ID = 'arcgis-streets';
+export const DEFAULT_BASE_LAYER_ID = 'openfreemap-liberty';
 
 export const MAP_METADATA = {
   sourceCrs: 'VN-2000',

@@ -21,6 +21,7 @@ import { VILLAGES, COMMUNE } from '@/data/laobao-administrative-units';
 import { BASE_LAYERS, VIETNAM_CENTER } from '@/lib/map-config';
 import type { MapState } from '@/components/map/map-client';
 import { MapSearch } from './map-search';
+import { MapLocationSearch } from './map-location-search';
 import { cn } from '@/lib/utils';
 
 interface MapToolbarProps {
@@ -126,6 +127,9 @@ export function MapToolbar({
         <MapSearch mapState={mapState} />
 
         <div className="flex-1" />
+
+        {/* Independent location search for the currently selected basemap */}
+        <MapLocationSearch mapState={mapState} />
 
         {/* Base layer switcher */}
         <Select value={activeBaseLayerId} onValueChange={setActiveBaseLayerId}>

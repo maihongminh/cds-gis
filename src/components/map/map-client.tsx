@@ -70,11 +70,19 @@ export interface MapState {
   setSelectedVillageCode: (code: string | null) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
+  locationSearchMarker: LocationSearchMarker | null;
+  setLocationSearchMarker: (marker: LocationSearchMarker | null) => void;
   flyToCoords: [number, number, number?] | null;
   setFlyToCoords: (c: [number, number, number?] | null) => void;
   activeBaseLayerId: string;
   setActiveBaseLayerId: (id: string) => void;
   currentRole: string | null;
+}
+
+export interface LocationSearchMarker {
+  label: string;
+  latitude: number;
+  longitude: number;
 }
 
 type EditorMode = 'view' | 'point' | 'line' | 'polygon' | 'modify';
@@ -128,6 +136,35 @@ function markerStyle(color: string, icon: MapMarkerIconName, size = 30) {
   const style = new Style({ image: markerImage(color, icon, size) });
   markerStyleCache.set(cacheKey, style);
   return style;
+}
+
+const locationSearchStyleCache = new globalThis.Map<string, Style[]>();
+
+function locationSearchStyle(feature: FeatureLike) {
+  const label = String(feature.get('name') ?? 'Vị trí tìm kiếm');
+  const cachedStyle = locationSearchStyleCache.get(label);
+  if (cachedStyle) return cachedStyle;
+
+  const styles = [
+    new Style({ image: markerImage('#0f766e', 'search', 34) }),
+    new Style({
+      text: new Text({
+        text: label,
+        font: '600 11px var(--font-be-vietnam-pro), sans-serif',
+        offsetY: -52,
+        padding: [4, 6, 4, 6],
+        fill: new Fill({ color: '#0f172a' }),
+        stroke: new Stroke({ color: 'rgba(255,255,255,0.98)', width: 3 }),
+        backgroundFill: new Fill({ color: 'rgba(255,255,255,0.92)' }),
+        backgroundStroke: new Stroke({
+          color: 'rgba(15,118,110,0.55)',
+          width: 1,
+        }),
+      }),
+    }),
+  ];
+  locationSearchStyleCache.set(label, styles);
+  return styles;
 }
 
 const tourismMarkerIcons: Record<TourismPoiType, MapMarkerIconName> = {
@@ -399,6 +436,7 @@ export default function MapClient({ mapState }: MapClientProps) {
   const tileSourceCacheRef = React.useRef(new globalThis.Map<string, XYZ>());
   const layerRegistryRef = React.useRef(new globalThis.Map<string, VectorLayer>());
   const villageLayerRef = React.useRef<VectorLayer | null>(null);
+  const locationSearchSourceRef = React.useRef(new VectorSource());
   const editableSourceRef = React.useRef(new VectorSource());
   const selectInteractionRef = React.useRef<Select | null>(null);
   const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
@@ -604,6 +642,13 @@ export default function MapClient({ mapState }: MapClientProps) {
       style: editableStyle,
       zIndex: 100,
     });
+    const locationSearchLayer = new VectorLayer({
+      source: locationSearchSourceRef.current,
+      declutter: true,
+      renderBuffer: 96,
+      style: locationSearchStyle,
+      zIndex: 120,
+    });
 
     const registeredLayers: Array<[string, VectorLayer]> = [
       ['layer-commune', communeLayer],
@@ -642,6 +687,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         graticule,
         ...registeredLayers.map(([, layer]) => layer),
         editableLayer,
+        locationSearchLayer,
       ],
       view: new View({
         center: fromLonLat([LAOBAO_CENTER.lng, LAOBAO_CENTER.lat]),
@@ -650,7 +696,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         maxZoom: 20,
       }),
       controls: defaultControls({ rotate: false }),
-      pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 1.25),
     });
     mapRef.current = map;
 
@@ -939,6 +985,22 @@ export default function MapClient({ mapState }: MapClientProps) {
     });
     setFlyToCoords(null);
   }, [mapReady, mapState.flyToCoords, mapState.setFlyToCoords]);
+
+  React.useEffect(() => {
+    if (!mapReady) return;
+    const source = locationSearchSourceRef.current;
+    source.clear();
+
+    const marker = mapState.locationSearchMarker;
+    if (!marker) return;
+    source.addFeature(
+      createPointFeature(
+        'location-search-marker',
+        [marker.longitude, marker.latitude],
+        { name: marker.label, kind: 'location-search' },
+      ),
+    );
+  }, [mapReady, mapState.locationSearchMarker]);
 
   React.useEffect(() => {
     if (!mapReady || !mapRef.current) return;

@@ -149,6 +149,7 @@ export type MapMarkerIconName =
   | 'market'
   | 'medical'
   | 'mountain'
+  | 'search'
   | 'school'
   | 'sports'
   | 'water'
@@ -170,6 +171,8 @@ const MAP_MARKER_ICON_PATHS: Record<MapMarkerIconName, string> = {
     '<path d="M4 10h16l-1.5-5h-13L4 10Zm1 0v10h14V10M8 20v-6h5v6"/>',
   medical: '<path d="M12 5v14M5 12h14"/>',
   mountain: '<path d="m3 19 6-10 4 6 2-3 6 7H3Zm6-10 2 3"/>',
+  search:
+    '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',
   school:
     '<path d="m2 9 10-5 10 5-10 5L2 9Zm4 3v5c3.5 2.5 8.5 2.5 12 0v-5m4-3v6"/>',
   sports:
