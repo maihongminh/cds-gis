@@ -17,7 +17,7 @@ import Draw from 'ol/interaction/Draw';
 import Modify from 'ol/interaction/Modify';
 import Select from 'ol/interaction/Select';
 import Snap from 'ol/interaction/Snap';
-import { fromLonLat, toLonLat } from 'ol/proj';
+import { fromLonLat } from 'ol/proj';
 import VectorSource from 'ol/source/Vector';
 import XYZ from 'ol/source/XYZ';
 import CircleStyle from 'ol/style/Circle';
@@ -31,7 +31,6 @@ import type { EventsKey } from 'ol/events';
 import { unByKey } from 'ol/Observable';
 import { apply as applyMapboxStyle } from 'ol-mapbox-style';
 import {
-  Check,
   Download,
   Eraser,
   MapPinPlus,
@@ -39,10 +38,13 @@ import {
   Pentagon,
   Pencil,
   Route,
+  Save,
   Trash2,
+  X,
 } from 'lucide-react';
+import { toast } from 'sonner';
 
-import { Button, Input } from '@/components/ui';
+import { Button, Input, Textarea } from '@/components/ui';
 import { MOCK_LAOBAO_COMMUNE_BOUNDARY } from '@/data/mock-laobao-commune-boundary';
 import { MOCK_VILLAGE_BOUNDARIES } from '@/data/mock-laobao-boundary';
 import { MOCK_DISASTER_RISK_ZONES } from '@/data/mock-map-disaster-risks';
@@ -86,6 +88,8 @@ export interface LocationSearchMarker {
 }
 
 type EditorMode = 'view' | 'point' | 'line' | 'polygon' | 'modify';
+type EditableGeometryKind = 'point' | 'line' | 'polygon';
+type EditableFeatureStatus = 'draft' | 'saved';
 
 const geoJsonFormat = new GeoJSON();
 
@@ -339,7 +343,7 @@ const plannedStateStyle = new Style({
   fill: new Fill({ color: 'rgba(167, 139, 250, 0.24)' }),
 });
 
-const editableStyle = new Style({
+const draftEditableStyle = new Style({
   stroke: new Stroke({ color: '#ea580c', width: 3, lineDash: [7, 4] }),
   fill: new Fill({ color: 'rgba(249, 115, 22, 0.2)' }),
   image: new CircleStyle({
@@ -348,6 +352,38 @@ const editableStyle = new Style({
     stroke: new Stroke({ color: '#ffffff', width: 2 }),
   }),
 });
+
+const savedEditableStyleCache = new globalThis.Map<string, Style>();
+
+function editableFeatureStyle(feature: FeatureLike) {
+  if (feature.get('status') !== 'saved') return draftEditableStyle;
+
+  const geometryType = feature.getGeometry()?.getType() ?? '';
+  const name = String(feature.get('name') ?? 'Đối tượng');
+  const cacheKey = `${geometryType}:${name}`;
+  const cachedStyle = savedEditableStyleCache.get(cacheKey);
+  if (cachedStyle) return cachedStyle;
+
+  const style = new Style({
+    stroke: new Stroke({ color: '#0f766e', width: 3 }),
+    fill: new Fill({ color: 'rgba(20, 184, 166, 0.2)' }),
+    image: new CircleStyle({
+      radius: 7,
+      fill: new Fill({ color: '#0f766e' }),
+      stroke: new Stroke({ color: '#ffffff', width: 2 }),
+    }),
+    text: new Text({
+      text: name,
+      placement: geometryType === 'LineString' ? 'line' : 'point',
+      offsetY: geometryType === 'Point' ? -18 : 0,
+      font: '600 10px var(--font-be-vietnam-pro), sans-serif',
+      fill: new Fill({ color: '#0f172a' }),
+      stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
+    }),
+  });
+  savedEditableStyleCache.set(cacheKey, style);
+  return style;
+}
 
 const selectedEditableStyle = new Style({
   stroke: new Stroke({ color: '#dc2626', width: 4 }),
@@ -414,9 +450,19 @@ function createDisasterFeatures(kind: 'landslide' | 'flood') {
   });
 }
 
-function formatCoordinate(value: number) {
-  return Number.isFinite(value) ? value.toFixed(6) : '';
+function editableGeometryKind(feature: Feature): EditableGeometryKind | null {
+  const geometryType = feature.getGeometry()?.getType();
+  if (geometryType === 'Point') return 'point';
+  if (geometryType === 'LineString') return 'line';
+  if (geometryType === 'Polygon') return 'polygon';
+  return null;
 }
+
+const editableGeometryLabels: Record<EditableGeometryKind, string> = {
+  point: 'Điểm',
+  line: 'Đường',
+  polygon: 'Vùng',
+};
 
 interface MapClientProps {
   mapState: MapState;
@@ -439,17 +485,60 @@ export default function MapClient({ mapState }: MapClientProps) {
   const locationSearchSourceRef = React.useRef(new VectorSource());
   const editableSourceRef = React.useRef(new VectorSource());
   const selectInteractionRef = React.useRef<Select | null>(null);
+  const activeDrawInteractionRef = React.useRef<Draw | null>(null);
   const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
   const eventKeysRef = React.useRef<EventsKey[]>([]);
 
   const [mapReady, setMapReady] = React.useState(false);
   const [editorMode, setEditorMode] = React.useState<EditorMode>('view');
+  const [isDrawing, setIsDrawing] = React.useState(false);
   const [editableFeatureCount, setEditableFeatureCount] = React.useState(0);
+  const [savedFeatureCount, setSavedFeatureCount] = React.useState(0);
   const [selectedFeatureId, setSelectedFeatureId] = React.useState<string | null>(null);
-  const [longitude, setLongitude] = React.useState('106.633245');
-  const [latitude, setLatitude] = React.useState('16.636031');
-  const [coordinateError, setCoordinateError] = React.useState<string | null>(null);
-  const [lastClickedCoordinate, setLastClickedCoordinate] = React.useState<[number, number] | null>(null);
+  const [selectedGeometryKind, setSelectedGeometryKind] =
+    React.useState<EditableGeometryKind | null>(null);
+  const [selectedFeatureStatus, setSelectedFeatureStatus] =
+    React.useState<EditableFeatureStatus | null>(null);
+  const [selectedFeatureName, setSelectedFeatureName] = React.useState('');
+  const [selectedFeatureCategory, setSelectedFeatureCategory] =
+    React.useState('');
+  const [selectedFeatureDescription, setSelectedFeatureDescription] =
+    React.useState('');
+  const [featureFormError, setFeatureFormError] = React.useState<string | null>(
+    null,
+  );
+
+  const clearSelectedFeatureState = React.useCallback(() => {
+    setSelectedFeatureId(null);
+    setSelectedGeometryKind(null);
+    setSelectedFeatureStatus(null);
+    setSelectedFeatureName('');
+    setSelectedFeatureCategory('');
+    setSelectedFeatureDescription('');
+    setFeatureFormError(null);
+  }, []);
+
+  const loadSelectedFeatureState = React.useCallback((feature: Feature) => {
+    const id = String(feature.getId() ?? 'editable-feature');
+    const geometryKind = editableGeometryKind(feature);
+    setSelectedFeatureId(id);
+    setSelectedGeometryKind(geometryKind);
+    setSelectedFeatureStatus(
+      feature.get('status') === 'saved' ? 'saved' : 'draft',
+    );
+    setSelectedFeatureName(String(feature.get('name') ?? ''));
+    setSelectedFeatureCategory(String(feature.get('category') ?? ''));
+    setSelectedFeatureDescription(String(feature.get('description') ?? ''));
+    setFeatureFormError(null);
+  }, []);
+
+  const refreshEditableFeatureStats = React.useCallback(() => {
+    const features = editableSourceRef.current.getFeatures();
+    setEditableFeatureCount(features.length);
+    setSavedFeatureCount(
+      features.filter((feature) => feature.get('status') === 'saved').length,
+    );
+  }, []);
 
   React.useEffect(() => {
     mapStateRef.current = mapState;
@@ -639,7 +728,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     });
     const editableLayer = new VectorLayer({
       source: editableSourceRef.current,
-      style: editableStyle,
+      style: editableFeatureStyle,
       zIndex: 100,
     });
     const locationSearchLayer = new VectorLayer({
@@ -776,6 +865,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     const selection = new Select({
       layers: [editableLayer],
       style: selectedEditableStyle,
+      hitTolerance: 8,
     });
     selectInteractionRef.current = selection;
     map.addInteraction(selection);
@@ -783,24 +873,14 @@ export default function MapClient({ mapState }: MapClientProps) {
     const selectionKey = selection.on('select', (event) => {
       const feature = event.selected[0];
       if (!feature) {
-        setSelectedFeatureId(null);
+        clearSelectedFeatureState();
         return;
       }
-      const id = String(feature.getId() ?? 'draft-feature');
-      setSelectedFeatureId(id);
-      const geometry = feature.getGeometry();
-      if (geometry instanceof Point) {
-        const [lng, lat] = toLonLat(geometry.getCoordinates());
-        setLongitude(formatCoordinate(lng));
-        setLatitude(formatCoordinate(lat));
-      }
+      loadSelectedFeatureState(feature);
     });
     eventKeysRef.current.push(selectionKey);
 
     const clickKey = map.on('singleclick', (event) => {
-      const [lng, lat] = toLonLat(event.coordinate);
-      setLastClickedCoordinate([lng, lat]);
-
       const villageFeature = map.forEachFeatureAtPixel(
         event.pixel,
         (feature) => feature,
@@ -817,11 +897,18 @@ export default function MapClient({ mapState }: MapClientProps) {
     });
     eventKeysRef.current.push(clickKey);
 
-    const updateFeatureCount = () =>
-      setEditableFeatureCount(editableSourceRef.current.getFeatures().length);
-    const addKey = editableSourceRef.current.on('addfeature', updateFeatureCount);
-    const removeKey = editableSourceRef.current.on('removefeature', updateFeatureCount);
-    const clearKey = editableSourceRef.current.on('clear', updateFeatureCount);
+    const addKey = editableSourceRef.current.on(
+      'addfeature',
+      refreshEditableFeatureStats,
+    );
+    const removeKey = editableSourceRef.current.on(
+      'removefeature',
+      refreshEditableFeatureStats,
+    );
+    const clearKey = editableSourceRef.current.on(
+      'clear',
+      refreshEditableFeatureStats,
+    );
     eventKeysRef.current.push(addKey, removeKey, clearKey);
 
     const extent = communeSource.getExtent();
@@ -839,6 +926,8 @@ export default function MapClient({ mapState }: MapClientProps) {
       activeEditorInteractionsRef.current.forEach((interaction) =>
         map.removeInteraction(interaction),
       );
+      activeDrawInteractionRef.current?.abortDrawing();
+      activeDrawInteractionRef.current = null;
       administrativeFetchControllers.forEach((controller) => controller.abort());
       eventKeysRef.current.forEach(unByKey);
       eventKeysRef.current = [];
@@ -856,7 +945,11 @@ export default function MapClient({ mapState }: MapClientProps) {
       selectInteractionRef.current = null;
       registry.clear();
     };
-  }, []);
+  }, [
+    clearSelectedFeatureState,
+    loadSelectedFeatureState,
+    refreshEditableFeatureStats,
+  ]);
 
   React.useEffect(() => {
     if (!mapReady) return;
@@ -1005,14 +1098,23 @@ export default function MapClient({ mapState }: MapClientProps) {
   React.useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     const map = mapRef.current;
+    const selection = selectInteractionRef.current;
     activeEditorInteractionsRef.current.forEach((interaction) =>
       map.removeInteraction(interaction),
     );
     activeEditorInteractionsRef.current = [];
+    activeDrawInteractionRef.current = null;
 
     const source = editableSourceRef.current;
     const interactions: Array<Draw | Modify | Snap> = [];
+    const isDrawMode =
+      editorMode === 'point' ||
+      editorMode === 'line' ||
+      editorMode === 'polygon';
+    selection?.setActive(!isDrawMode);
+
     if (editorMode === 'point' || editorMode === 'line' || editorMode === 'polygon') {
+      const geometryKind: EditableGeometryKind = editorMode;
       const draw = new Draw({
         source,
         type:
@@ -1021,29 +1123,60 @@ export default function MapClient({ mapState }: MapClientProps) {
             : editorMode === 'line'
               ? 'LineString'
               : 'Polygon',
+        stopClick: true,
+      });
+      activeDrawInteractionRef.current = draw;
+      draw.on('drawstart', () => {
+        setIsDrawing(true);
+      });
+      draw.on('drawabort', () => {
+        setIsDrawing(false);
+        draw.setActive(false);
+        activeDrawInteractionRef.current = null;
+        setEditorMode('view');
       });
       draw.on('drawend', (event) => {
-        const id = `draft-${Date.now()}`;
+        activeDrawInteractionRef.current = null;
+        setIsDrawing(false);
+        const id = `object-${geometryKind}-${Date.now()}`;
+        const objectNumber = source.getFeatures().length + 1;
+        const defaultName = `${editableGeometryLabels[geometryKind]} mới ${objectNumber}`;
         event.feature.setId(id);
         event.feature.setProperties({
-          name: `Đối tượng nháp ${source.getFeatures().length + 1}`,
+          objectType: geometryKind,
+          name: defaultName,
+          category: '',
+          description: '',
           status: 'draft',
           createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         });
-        const selectedFeatures = selectInteractionRef.current?.getFeatures();
+        const selectedFeatures = selection?.getFeatures();
         selectedFeatures?.clear();
         selectedFeatures?.push(event.feature);
-        setSelectedFeatureId(id);
+        loadSelectedFeatureState(event.feature);
         setEditorMode('view');
+        toast.info(
+          `${editableGeometryLabels[geometryKind]} đã vẽ xong. Hãy nhập thông tin và bấm Lưu đối tượng.`,
+        );
       });
       interactions.push(draw, new Snap({ source }));
     } else if (editorMode === 'modify') {
-      const selectedFeatures = selectInteractionRef.current?.getFeatures();
-      if (selectedFeatures) {
-        interactions.push(
-          new Modify({ features: selectedFeatures }),
-          new Snap({ source }),
-        );
+      const selectedFeatures = selection?.getFeatures();
+      if (selectedFeatures && selectedFeatures.getLength() > 0) {
+        const modify = new Modify({ features: selectedFeatures });
+        modify.on('modifyend', (event) => {
+          const now = new Date().toISOString();
+          event.features.forEach((feature) => {
+            feature.set('updatedAt', now);
+            feature.changed();
+          });
+          const selectedFeature = selectedFeatures.item(0);
+          if (selectedFeature) loadSelectedFeatureState(selectedFeature);
+        });
+        interactions.push(modify, new Snap({ source }));
+      } else {
+        setEditorMode('view');
       }
     }
 
@@ -1052,55 +1185,97 @@ export default function MapClient({ mapState }: MapClientProps) {
 
     return () => {
       interactions.forEach((interaction) => map.removeInteraction(interaction));
+      if (activeDrawInteractionRef.current === interactions[0]) {
+        activeDrawInteractionRef.current = null;
+      }
     };
-  }, [editorMode, mapReady]);
+  }, [editorMode, loadSelectedFeatureState, mapReady]);
 
-  function parseManualCoordinates(): [number, number] | null {
-    const lng = Number(longitude);
-    const lat = Number(latitude);
-    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
-      setCoordinateError('Tọa độ phải là số hợp lệ.');
-      return null;
+  React.useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+
+      if (
+        editorMode === 'point' ||
+        editorMode === 'line' ||
+        editorMode === 'polygon'
+      ) {
+        event.preventDefault();
+        activeDrawInteractionRef.current?.abortDrawing();
+        setIsDrawing(false);
+        setEditorMode('view');
+        toast.info('Đã dừng thao tác vẽ.');
+        return;
+      }
+
+      if (editorMode === 'modify') {
+        event.preventDefault();
+        setEditorMode('view');
+        toast.info('Đã kết thúc chỉnh sửa đỉnh.');
+      }
     }
-    if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
-      setCoordinateError('Tọa độ nằm ngoài phạm vi EPSG:4326.');
-      return null;
-    }
-    setCoordinateError(null);
-    return [lng, lat];
-  }
 
-  function addPointFromCoordinates() {
-    const coordinate = parseManualCoordinates();
-    if (!coordinate) return;
-    const id = `draft-${Date.now()}`;
-    const feature = createPointFeature(id, coordinate, {
-      name: `Điểm nhập tọa độ ${editableFeatureCount + 1}`,
-      status: 'draft',
-      createdAt: new Date().toISOString(),
-    });
-    editableSourceRef.current.addFeature(feature);
-    selectInteractionRef.current?.getFeatures().clear();
-    selectInteractionRef.current?.getFeatures().push(feature);
-    setSelectedFeatureId(id);
-    mapRef.current?.getView().animate({
-      center: fromLonLat(coordinate),
-      zoom: Math.max(mapRef.current.getView().getZoom() ?? 14, 16),
-      duration: 500,
-    });
-  }
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [editorMode]);
 
-  function updateSelectedPoint() {
-    const coordinate = parseManualCoordinates();
-    if (!coordinate) return;
-    const feature = selectInteractionRef.current?.getFeatures().item(0);
-    const geometry = feature?.getGeometry();
-    if (!(geometry instanceof Point)) {
-      setCoordinateError('Hãy chọn một điểm nháp để cập nhật tọa độ.');
+  function handleEditorModeChange(nextMode: EditorMode) {
+    if (nextMode === 'modify' && !selectedFeatureId) {
+      toast.error('Hãy chọn một đối tượng trước khi sửa đỉnh.');
       return;
     }
-    geometry.setCoordinates(fromLonLat(coordinate));
-    feature?.set('updatedAt', new Date().toISOString());
+
+    const currentlyDrawing =
+      editorMode === 'point' ||
+      editorMode === 'line' ||
+      editorMode === 'polygon';
+    if (currentlyDrawing) {
+      activeDrawInteractionRef.current?.abortDrawing();
+      setIsDrawing(false);
+    }
+
+    if (nextMode === editorMode && nextMode !== 'view') {
+      setEditorMode('view');
+      return;
+    }
+    setEditorMode(nextMode);
+  }
+
+  function saveSelectedFeature() {
+    const feature = selectInteractionRef.current?.getFeatures().item(0);
+    if (!feature) {
+      setFeatureFormError('Hãy chọn một đối tượng để lưu.');
+      return;
+    }
+
+    const name = selectedFeatureName.trim();
+    if (!name) {
+      setFeatureFormError('Tên đối tượng không được để trống.');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    feature.setProperties({
+      name,
+      category: selectedFeatureCategory.trim(),
+      description: selectedFeatureDescription.trim(),
+      objectType: editableGeometryKind(feature),
+      status: 'saved',
+      updatedAt: now,
+      savedAt: feature.get('savedAt') ?? now,
+    });
+    feature.changed();
+    editableSourceRef.current.changed();
+    setSelectedFeatureStatus('saved');
+    setFeatureFormError(null);
+    refreshEditableFeatureStats();
+    toast.success(`Đã lưu ${name} trong phiên làm việc POC.`);
+  }
+
+  function deselectEditableFeature() {
+    selectInteractionRef.current?.getFeatures().clear();
+    clearSelectedFeatureState();
+    if (editorMode === 'modify') setEditorMode('view');
   }
 
   function deleteSelectedFeature() {
@@ -1109,13 +1284,19 @@ export default function MapClient({ mapState }: MapClientProps) {
     if (!feature) return;
     editableSourceRef.current.removeFeature(feature);
     selection?.clear();
-    setSelectedFeatureId(null);
+    clearSelectedFeatureState();
+    if (editorMode === 'modify') setEditorMode('view');
+    toast.success('Đã xóa đối tượng.');
   }
 
   function clearEditableFeatures() {
+    activeDrawInteractionRef.current?.abortDrawing();
+    setEditorMode('view');
+    setIsDrawing(false);
     editableSourceRef.current.clear();
     selectInteractionRef.current?.getFeatures().clear();
-    setSelectedFeatureId(null);
+    clearSelectedFeatureState();
+    toast.success('Đã xóa toàn bộ đối tượng POC.');
   }
 
   function exportEditableGeoJson() {
@@ -1146,17 +1327,23 @@ export default function MapClient({ mapState }: MapClientProps) {
     { mode: 'polygon', label: 'Vẽ vùng', icon: Pentagon },
     { mode: 'modify', label: 'Sửa đỉnh', icon: Pencil },
   ];
+  const isDrawMode =
+    editorMode === 'point' ||
+    editorMode === 'line' ||
+    editorMode === 'polygon';
+  const draftFeatureCount = editableFeatureCount - savedFeatureCount;
 
   return (
     <div className="relative h-full min-h-[520px] w-full overflow-hidden bg-slate-100 dark:bg-slate-950">
       <div ref={targetRef} className="h-full min-h-[520px] w-full" aria-label="Bản đồ GIS OpenLayers" />
 
-      <div className="absolute bottom-8 left-2.5 z-10 w-[min(23rem,calc(100%-1.25rem))] rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
+      <div className="absolute bottom-8 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <p className="text-[11px] font-bold text-foreground">Biên tập đối tượng (POC)</p>
             <p className="text-[8px] text-muted-foreground">
-              {editableFeatureCount} đối tượng nháp · chưa lưu backend
+              {savedFeatureCount} đã lưu · {draftFeatureCount} nháp · lưu trong
+              phiên, chưa gửi backend
             </p>
           </div>
           {selectedFeatureId && (
@@ -1173,7 +1360,8 @@ export default function MapClient({ mapState }: MapClientProps) {
               type="button"
               size="xs"
               variant={editorMode === mode ? 'default' : 'outline'}
-              onClick={() => setEditorMode(mode)}
+              onClick={() => handleEditorModeChange(mode)}
+              disabled={mode === 'modify' && !selectedFeatureId}
               className={cn('h-7 gap-1 px-2 text-[9px] shadow-none', editorMode === mode && 'border-primary')}
               title={label}
             >
@@ -1181,6 +1369,19 @@ export default function MapClient({ mapState }: MapClientProps) {
               <span className="hidden sm:inline">{label}</span>
             </Button>
           ))}
+          {isDrawMode && (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => handleEditorModeChange('view')}
+              className="h-7 gap-1 px-2 text-[9px] shadow-none"
+              title="Dừng vẽ (Esc)"
+            >
+              <X className="size-3" />
+              Dừng
+            </Button>
+          )}
           <Button
             type="button"
             size="xs"
@@ -1216,52 +1417,98 @@ export default function MapClient({ mapState }: MapClientProps) {
           </Button>
         </div>
 
-        <div className="mt-2 grid grid-cols-[1fr_1fr_auto_auto] gap-1">
-          <Input
-            value={longitude}
-            onChange={(event) => setLongitude(event.target.value)}
-            inputMode="decimal"
-            aria-label="Kinh độ"
-            placeholder="Kinh độ"
-            className="h-7 px-2 font-mono text-[9px] shadow-none"
-          />
-          <Input
-            value={latitude}
-            onChange={(event) => setLatitude(event.target.value)}
-            inputMode="decimal"
-            aria-label="Vĩ độ"
-            placeholder="Vĩ độ"
-            className="h-7 px-2 font-mono text-[9px] shadow-none"
-          />
-          <Button
-            type="button"
-            size="xs"
-            onClick={addPointFromCoordinates}
-            className="h-7 px-2 text-[9px]"
-            title="Thêm điểm theo tọa độ"
-          >
-            <MapPinPlus className="size-3" />
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={updateSelectedPoint}
-            disabled={!selectedFeatureId}
-            className="h-7 px-2 text-[9px]"
-            title="Cập nhật tọa độ điểm đang chọn"
-          >
-            <Check className="size-3" />
-          </Button>
-        </div>
-        {coordinateError ? (
-          <p className="mt-1 text-[8px] font-medium text-destructive">{coordinateError}</p>
-        ) : lastClickedCoordinate ? (
-          <p className="mt-1 text-[8px] text-muted-foreground">
-            Vị trí vừa chọn: {formatCoordinate(lastClickedCoordinate[0])},{' '}
-            {formatCoordinate(lastClickedCoordinate[1])}
-          </p>
-        ) : null}
+        {isDrawMode && (
+          <div className="mt-2 rounded-md border border-primary/25 bg-primary/5 px-2 py-1.5 text-[8px] leading-4 text-foreground">
+            {editorMode === 'point'
+              ? 'Nhấp một lần để đặt điểm.'
+              : isDrawing
+                ? 'Tiếp tục thêm đỉnh, nhấp đúp để hoàn thành.'
+                : 'Nhấp để bắt đầu, nhấp đúp để hoàn thành.'}{' '}
+            Nhấn <kbd className="rounded border bg-background px-1 font-mono">Esc</kbd>{' '}
+            để hủy và dừng vẽ.
+          </div>
+        )}
+
+        {selectedFeatureId && selectedGeometryKind && (
+          <div className="mt-2 rounded-lg border border-border bg-background/70 p-2">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <p className="text-[9px] font-semibold text-foreground">
+                Thông tin {editableGeometryLabels[selectedGeometryKind].toLocaleLowerCase('vi')}
+              </p>
+              <div className="flex items-center gap-1">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[8px] text-muted-foreground">
+                  {editableGeometryLabels[selectedGeometryKind]}
+                </span>
+                <span
+                  className={cn(
+                    'rounded px-1.5 py-0.5 text-[8px] font-medium',
+                    selectedFeatureStatus === 'saved'
+                      ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-orange-500/10 text-orange-700 dark:text-orange-300',
+                  )}
+                >
+                  {selectedFeatureStatus === 'saved' ? 'Đã lưu' : 'Nháp'}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <Input
+                value={selectedFeatureName}
+                onChange={(event) => setSelectedFeatureName(event.target.value)}
+                aria-label="Tên đối tượng"
+                placeholder="Tên đối tượng *"
+                className="h-7 px-2 text-[9px] shadow-none"
+              />
+              <Input
+                value={selectedFeatureCategory}
+                onChange={(event) =>
+                  setSelectedFeatureCategory(event.target.value)
+                }
+                aria-label="Nhóm đối tượng"
+                placeholder="Nhóm / loại"
+                className="h-7 px-2 text-[9px] shadow-none"
+              />
+            </div>
+            <Textarea
+              value={selectedFeatureDescription}
+              onChange={(event) =>
+                setSelectedFeatureDescription(event.target.value)
+              }
+              aria-label="Mô tả đối tượng"
+              placeholder="Mô tả, ghi chú..."
+              rows={2}
+              className="mt-1.5 min-h-14 resize-none px-2 py-1.5 text-[9px] shadow-none"
+            />
+            {featureFormError && (
+              <p className="mt-1 text-[8px] font-medium text-destructive">
+                {featureFormError}
+              </p>
+            )}
+            <div className="mt-1.5 flex justify-end gap-1">
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={deselectEditableFeature}
+                className="h-7 gap-1 px-2 text-[9px] shadow-none"
+              >
+                <X className="size-3" />
+                Bỏ chọn
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                onClick={saveSelectedFeature}
+                className="h-7 gap-1 px-2 text-[9px] shadow-none"
+              >
+                <Save className="size-3" />
+                Lưu đối tượng
+              </Button>
+            </div>
+          </div>
+        )}
+
       </div>
 
       <style>{`
