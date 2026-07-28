@@ -404,15 +404,25 @@ function editableFeatureStyle(feature: FeatureLike) {
   const layerConfig = MAP_LAYER_BY_ID.get(layerId);
   if (status !== 'saved' && !layerConfig) return draftEditableStyle;
 
-  const color = layerConfig?.styleConfig.color ?? '#0f766e';
-  const fillColor = layerConfig?.styleConfig.fillColor ?? color;
+  const color = String(
+    feature.get('previewStrokeColor') ||
+      feature.get('strokeColor') ||
+      layerConfig?.styleConfig.color ||
+      '#0f766e',
+  );
+  const fillColor = String(
+    feature.get('previewFillColor') ||
+      feature.get('fillColor') ||
+      layerConfig?.styleConfig.fillColor ||
+      color,
+  );
   const markerIcon =
     layerConfig?.styleConfig.markerIcon ??
     catalogMarkerIconFallbacks[layerConfig?.styleConfig.icon ?? ''] ??
     'building';
   const geometryType = feature.getGeometry()?.getType() ?? '';
   const name = String(feature.get('name') ?? 'Đối tượng');
-  const cacheKey = `${status}:${geometryType}:${layerId}:${name}:${color}:${markerIcon}`;
+  const cacheKey = `${status}:${geometryType}:${layerId}:${name}:${color}:${fillColor}:${markerIcon}`;
   const cachedStyle = savedEditableStyleCache.get(cacheKey);
   if (cachedStyle) return cachedStyle;
 
@@ -642,6 +652,10 @@ export default function MapClient({ mapState }: MapClientProps) {
     React.useState('');
   const [selectedFeatureDescription, setSelectedFeatureDescription] =
     React.useState('');
+  const [selectedFeatureStrokeColor, setSelectedFeatureStrokeColor] =
+    React.useState('#ea580c');
+  const [selectedFeatureFillColor, setSelectedFeatureFillColor] =
+    React.useState('#fb923c');
   const [featureFormError, setFeatureFormError] = React.useState<string | null>(
     null,
   );
@@ -663,6 +677,8 @@ export default function MapClient({ mapState }: MapClientProps) {
     setSelectedFeatureName('');
     setSelectedFeatureLayerId('');
     setSelectedFeatureDescription('');
+    setSelectedFeatureStrokeColor('#ea580c');
+    setSelectedFeatureFillColor('#fb923c');
     setFeatureFormError(null);
   }, []);
 
@@ -675,15 +691,32 @@ export default function MapClient({ mapState }: MapClientProps) {
       feature.get('status') === 'saved' ? 'saved' : 'draft',
     );
     setSelectedFeatureName(String(feature.get('name') ?? ''));
-    setSelectedFeatureLayerId(
+    const layerId = String(
+      feature.get('previewLayerId') ||
+        feature.get('layerId') ||
+        feature.get('category') ||
+        '',
+    );
+    const layerStyle = MAP_LAYER_BY_ID.get(layerId)?.styleConfig;
+    setSelectedFeatureLayerId(layerId);
+    setSelectedFeatureDescription(String(feature.get('description') ?? ''));
+    setSelectedFeatureStrokeColor(
       String(
-        feature.get('previewLayerId') ||
-          feature.get('layerId') ||
-          feature.get('category') ||
-          '',
+        feature.get('previewStrokeColor') ||
+          feature.get('strokeColor') ||
+          layerStyle?.color ||
+          '#ea580c',
       ),
     );
-    setSelectedFeatureDescription(String(feature.get('description') ?? ''));
+    setSelectedFeatureFillColor(
+      String(
+        feature.get('previewFillColor') ||
+          feature.get('fillColor') ||
+          layerStyle?.fillColor ||
+          layerStyle?.color ||
+          '#fb923c',
+      ),
+    );
     setFeatureFormError(null);
   }, []);
 
@@ -1108,6 +1141,8 @@ export default function MapClient({ mapState }: MapClientProps) {
     const selectionKey = selection.on('select', (event) => {
       event.deselected.forEach((feature) => {
         feature.unset('previewLayerId', true);
+        feature.unset('previewStrokeColor', true);
+        feature.unset('previewFillColor', true);
         feature.changed();
       });
       const feature = event.selected[0];
@@ -1687,12 +1722,19 @@ export default function MapClient({ mapState }: MapClientProps) {
       layerId: selectedFeatureLayerId,
       category: selectedLayer?.name ?? '',
       description: selectedFeatureDescription.trim(),
+      strokeColor: selectedFeatureStrokeColor,
+      fillColor:
+        selectedGeometryKind === 'polygon'
+          ? selectedFeatureFillColor
+          : undefined,
       objectType: editableGeometryKind(feature),
       status: 'saved',
       updatedAt: now,
       savedAt: feature.get('savedAt') ?? now,
     });
     feature.unset('previewLayerId', true);
+    feature.unset('previewStrokeColor', true);
+    feature.unset('previewFillColor', true);
     feature.changed();
     editableSourceRef.current.changed();
     setSelectedFeatureStatus('saved');
@@ -1708,10 +1750,22 @@ export default function MapClient({ mapState }: MapClientProps) {
     const selection = selectInteractionRef.current?.getFeatures();
     const feature = selection?.item(0);
     feature?.unset('previewLayerId', true);
+    feature?.unset('previewStrokeColor', true);
+    feature?.unset('previewFillColor', true);
     feature?.changed();
     selection?.clear();
     clearSelectedFeatureState();
     if (editorMode === 'modify') setEditorMode('view');
+  }
+
+  function previewSelectedFeatureColor(
+    property: 'previewStrokeColor' | 'previewFillColor',
+    color: string,
+  ) {
+    const feature = selectInteractionRef.current?.getFeatures().item(0);
+    if (!feature) return;
+    feature.set(property, color);
+    feature.changed();
   }
 
   function deleteSelectedFeature() {
@@ -1969,12 +2023,20 @@ export default function MapClient({ mapState }: MapClientProps) {
               <UiSelect
                 value={selectedFeatureLayerId || undefined}
                 onValueChange={(value) => {
+                  const layerStyle = MAP_LAYER_BY_ID.get(value)?.styleConfig;
+                  const strokeColor = layerStyle?.color ?? '#0f766e';
+                  const fillColor =
+                    layerStyle?.fillColor ?? layerStyle?.color ?? '#14b8a6';
                   setSelectedFeatureLayerId(value);
+                  setSelectedFeatureStrokeColor(strokeColor);
+                  setSelectedFeatureFillColor(fillColor);
                   setFeatureFormError(null);
                   const feature =
                     selectInteractionRef.current?.getFeatures().item(0);
                   if (feature) {
                     feature.set('previewLayerId', value);
+                    feature.set('previewStrokeColor', strokeColor);
+                    feature.set('previewFillColor', fillColor);
                     feature.changed();
                   }
                 }}
@@ -2016,6 +2078,72 @@ export default function MapClient({ mapState }: MapClientProps) {
               rows={2}
               className="mt-1.5 min-h-14 resize-none px-2 py-1.5 text-[9px] shadow-none"
             />
+            <div
+              className={cn(
+                'mt-1.5 grid gap-1.5',
+                selectedGeometryKind === 'polygon'
+                  ? 'grid-cols-2'
+                  : 'grid-cols-1',
+              )}
+            >
+              <label className="space-y-1 text-[8px] font-medium text-muted-foreground">
+                <span>
+                  {selectedGeometryKind === 'polygon'
+                    ? 'Màu viền'
+                    : selectedGeometryKind === 'line'
+                      ? 'Màu đường'
+                      : 'Màu ký hiệu'}
+                </span>
+                <span className="flex h-7 items-center gap-2 rounded-md border border-input bg-background px-1.5">
+                  <Input
+                    type="color"
+                    value={selectedFeatureStrokeColor}
+                    onChange={(event) => {
+                      const color = event.target.value;
+                      setSelectedFeatureStrokeColor(color);
+                      previewSelectedFeatureColor(
+                        'previewStrokeColor',
+                        color,
+                      );
+                    }}
+                    aria-label={
+                      selectedGeometryKind === 'polygon'
+                        ? 'Màu viền vùng'
+                        : 'Màu đối tượng'
+                    }
+                    className="h-5 w-7 cursor-pointer border-0 bg-transparent p-0 shadow-none"
+                  />
+                  <span className="font-mono uppercase">
+                    {selectedFeatureStrokeColor}
+                  </span>
+                </span>
+              </label>
+
+              {selectedGeometryKind === 'polygon' && (
+                <label className="space-y-1 text-[8px] font-medium text-muted-foreground">
+                  <span>Màu bên trong</span>
+                  <span className="flex h-7 items-center gap-2 rounded-md border border-input bg-background px-1.5">
+                    <Input
+                      type="color"
+                      value={selectedFeatureFillColor}
+                      onChange={(event) => {
+                        const color = event.target.value;
+                        setSelectedFeatureFillColor(color);
+                        previewSelectedFeatureColor(
+                          'previewFillColor',
+                          color,
+                        );
+                      }}
+                      aria-label="Màu bên trong vùng"
+                      className="h-5 w-7 cursor-pointer border-0 bg-transparent p-0 shadow-none"
+                    />
+                    <span className="font-mono uppercase">
+                      {selectedFeatureFillColor}
+                    </span>
+                  </span>
+                </label>
+              )}
+            </div>
             {featureFormError && (
               <p className="mt-1 text-[8px] font-medium text-destructive">
                 {featureFormError}
