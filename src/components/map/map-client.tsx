@@ -4,6 +4,7 @@
 import * as React from 'react';
 import Feature from 'ol/Feature';
 import GeoJSON from 'ol/format/GeoJSON';
+import LineString from 'ol/geom/LineString';
 import Point from 'ol/geom/Point';
 import Polygon from 'ol/geom/Polygon';
 import Graticule from 'ol/layer/Graticule';
@@ -17,7 +18,7 @@ import Draw from 'ol/interaction/Draw';
 import Modify from 'ol/interaction/Modify';
 import Select from 'ol/interaction/Select';
 import Snap from 'ol/interaction/Snap';
-import { fromLonLat } from 'ol/proj';
+import { fromLonLat, toLonLat } from 'ol/proj';
 import VectorSource from 'ol/source/Vector';
 import XYZ from 'ol/source/XYZ';
 import CircleStyle from 'ol/style/Circle';
@@ -34,9 +35,9 @@ import {
   Download,
   Eraser,
   MapPinPlus,
-  MousePointer2,
   Pentagon,
   Pencil,
+  Plus,
   Route,
   Save,
   Trash2,
@@ -464,6 +465,89 @@ const editableGeometryLabels: Record<EditableGeometryKind, string> = {
   polygon: 'Vùng',
 };
 
+const coordinateInputPlaceholders: Record<EditableGeometryKind, string> = {
+  point: '106.633245, 16.636031',
+  line: '106.630000, 16.636000\n106.635000, 16.638000',
+  polygon:
+    '106.630000, 16.634000\n106.636000, 16.634000\n106.636000, 16.639000',
+};
+
+function parseCoordinateInput(
+  value: string,
+  geometryKind: EditableGeometryKind,
+):
+  | { ok: true; coordinates: [number, number][] }
+  | { ok: false; error: string } {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return { ok: false, error: 'Hãy nhập ít nhất một cặp kinh độ, vĩ độ.' };
+  }
+
+  const coordinates: [number, number][] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const parts = lines[index]
+      .replace(/[[\]()]/g, '')
+      .split(/[,\s;]+/)
+      .filter(Boolean);
+    if (parts.length !== 2) {
+      return {
+        ok: false,
+        error: `Dòng ${index + 1} phải có đúng dạng: kinh độ, vĩ độ.`,
+      };
+    }
+
+    const longitude = Number(parts[0]);
+    const latitude = Number(parts[1]);
+    if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+      return {
+        ok: false,
+        error: `Tọa độ tại dòng ${index + 1} không phải số hợp lệ.`,
+      };
+    }
+    if (longitude < -180 || longitude > 180) {
+      return {
+        ok: false,
+        error: `Kinh độ tại dòng ${index + 1} phải từ -180 đến 180.`,
+      };
+    }
+    if (latitude < -90 || latitude > 90) {
+      return {
+        ok: false,
+        error: `Vĩ độ tại dòng ${index + 1} phải từ -90 đến 90.`,
+      };
+    }
+    coordinates.push([longitude, latitude]);
+  }
+
+  const requiredCoordinateCount =
+    geometryKind === 'point' ? 1 : geometryKind === 'line' ? 2 : 3;
+  if (geometryKind === 'point' && coordinates.length !== 1) {
+    return { ok: false, error: 'Điểm chỉ được nhập một cặp tọa độ.' };
+  }
+  if (coordinates.length < requiredCoordinateCount) {
+    return {
+      ok: false,
+      error: `${editableGeometryLabels[geometryKind]} cần ít nhất ${requiredCoordinateCount} cặp tọa độ.`,
+    };
+  }
+
+  const uniqueCoordinates = new Set(
+    coordinates.map(([longitude, latitude]) => `${longitude},${latitude}`),
+  );
+  if (uniqueCoordinates.size < requiredCoordinateCount) {
+    return {
+      ok: false,
+      error: `${editableGeometryLabels[geometryKind]} cần ít nhất ${requiredCoordinateCount} tọa độ khác nhau.`,
+    };
+  }
+
+  return { ok: true, coordinates };
+}
+
 interface MapClientProps {
   mapState: MapState;
 }
@@ -486,6 +570,7 @@ export default function MapClient({ mapState }: MapClientProps) {
   const editableSourceRef = React.useRef(new VectorSource());
   const selectInteractionRef = React.useRef<Select | null>(null);
   const activeDrawInteractionRef = React.useRef<Draw | null>(null);
+  const drawCoordinateOverlayRef = React.useRef<HTMLDivElement>(null);
   const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
   const eventKeysRef = React.useRef<EventsKey[]>([]);
 
@@ -507,6 +592,16 @@ export default function MapClient({ mapState }: MapClientProps) {
   const [featureFormError, setFeatureFormError] = React.useState<string | null>(
     null,
   );
+  const [coordinateInputs, setCoordinateInputs] = React.useState<
+    Record<EditableGeometryKind, string>
+  >({
+    point: '',
+    line: '',
+    polygon: '',
+  });
+  const [coordinateInputError, setCoordinateInputError] = React.useState<
+    string | null
+  >(null);
 
   const clearSelectedFeatureState = React.useCallback(() => {
     setSelectedFeatureId(null);
@@ -1148,6 +1243,7 @@ export default function MapClient({ mapState }: MapClientProps) {
           category: '',
           description: '',
           status: 'draft',
+          creationMethod: 'draw',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });
@@ -1192,6 +1288,74 @@ export default function MapClient({ mapState }: MapClientProps) {
   }, [editorMode, loadSelectedFeatureState, mapReady]);
 
   React.useEffect(() => {
+    const map = mapRef.current;
+    const overlay = drawCoordinateOverlayRef.current;
+    const isDrawingMode =
+      editorMode === 'point' ||
+      editorMode === 'line' ||
+      editorMode === 'polygon';
+
+    if (!mapReady || !map || !overlay || !isDrawingMode) {
+      if (overlay) overlay.style.opacity = '0';
+      return;
+    }
+
+    let animationFrame: number | null = null;
+    let pendingPosition:
+      | { pixel: [number, number]; coordinate: [number, number] }
+      | null = null;
+
+    const hideOverlay = () => {
+      pendingPosition = null;
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      overlay.style.opacity = '0';
+    };
+
+    const pointerMoveKey = map.on('pointermove', (event) => {
+      const [longitude, latitude] = toLonLat(event.coordinate);
+      pendingPosition = {
+        pixel: [event.pixel[0], event.pixel[1]],
+        coordinate: [longitude, latitude],
+      };
+      if (animationFrame !== null) return;
+
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null;
+        if (!pendingPosition) return;
+
+        const { pixel, coordinate } = pendingPosition;
+        const [mapWidth, mapHeight] = map.getSize() ?? [0, 0];
+        const tooltipWidth = 174;
+        const tooltipHeight = 28;
+        const left =
+          pixel[0] + tooltipWidth + 16 > mapWidth
+            ? Math.max(8, pixel[0] - tooltipWidth - 14)
+            : pixel[0] + 14;
+        const top =
+          pixel[1] + tooltipHeight + 16 > mapHeight
+            ? Math.max(8, pixel[1] - tooltipHeight - 14)
+            : pixel[1] + 14;
+
+        overlay.textContent = `KĐ ${coordinate[0].toFixed(6)} · VĐ ${coordinate[1].toFixed(6)}`;
+        overlay.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+        overlay.style.opacity = '1';
+      });
+    });
+
+    const viewport = map.getViewport();
+    viewport.addEventListener('pointerleave', hideOverlay);
+
+    return () => {
+      unByKey(pointerMoveKey);
+      viewport.removeEventListener('pointerleave', hideOverlay);
+      hideOverlay();
+    };
+  }, [editorMode, mapReady]);
+
+  React.useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
 
@@ -1225,6 +1389,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       return;
     }
 
+    setCoordinateInputError(null);
     const currentlyDrawing =
       editorMode === 'point' ||
       editorMode === 'line' ||
@@ -1239,6 +1404,97 @@ export default function MapClient({ mapState }: MapClientProps) {
       return;
     }
     setEditorMode(nextMode);
+  }
+
+  function createEditableFeatureFromCoordinates() {
+    if (
+      editorMode !== 'point' &&
+      editorMode !== 'line' &&
+      editorMode !== 'polygon'
+    ) {
+      return;
+    }
+
+    const geometryKind: EditableGeometryKind = editorMode;
+    const result = parseCoordinateInput(
+      coordinateInputs[geometryKind],
+      geometryKind,
+    );
+    if (!result.ok) {
+      setCoordinateInputError(result.error);
+      return;
+    }
+
+    const projectedCoordinates = result.coordinates.map((coordinate) =>
+      fromLonLat(coordinate),
+    );
+    const geometry =
+      geometryKind === 'point'
+        ? new Point(projectedCoordinates[0])
+        : geometryKind === 'line'
+          ? new LineString(projectedCoordinates)
+          : new Polygon([
+              (() => {
+                const ring = projectedCoordinates.map((coordinate) => [
+                  coordinate[0],
+                  coordinate[1],
+                ]);
+                const first = ring[0];
+                const last = ring[ring.length - 1];
+                if (first[0] !== last[0] || first[1] !== last[1]) {
+                  ring.push([first[0], first[1]]);
+                }
+                return ring;
+              })(),
+            ]);
+
+    activeDrawInteractionRef.current?.abortDrawing();
+    setIsDrawing(false);
+
+    const source = editableSourceRef.current;
+    const objectNumber = source.getFeatures().length + 1;
+    const id = `object-${geometryKind}-${Date.now()}`;
+    const now = new Date().toISOString();
+    const feature = new Feature({
+      geometry,
+      objectType: geometryKind,
+      name: `${editableGeometryLabels[geometryKind]} mới ${objectNumber}`,
+      category: '',
+      description: '',
+      status: 'draft',
+      creationMethod: 'coordinates',
+      createdAt: now,
+      updatedAt: now,
+    });
+    feature.setId(id);
+    source.addFeature(feature);
+
+    const selectedFeatures = selectInteractionRef.current?.getFeatures();
+    selectedFeatures?.clear();
+    selectedFeatures?.push(feature);
+    loadSelectedFeatureState(feature);
+    setCoordinateInputs((current) => ({ ...current, [geometryKind]: '' }));
+    setCoordinateInputError(null);
+    setEditorMode('view');
+
+    const view = mapRef.current?.getView();
+    if (geometry instanceof Point) {
+      view?.animate({
+        center: geometry.getCoordinates(),
+        zoom: Math.max(view.getZoom() ?? 14, 17),
+        duration: 450,
+      });
+    } else {
+      view?.fit(geometry.getExtent(), {
+        padding: [100, 100, 100, 100],
+        duration: 450,
+        maxZoom: 17,
+      });
+    }
+
+    toast.info(
+      `${editableGeometryLabels[geometryKind]} đã được tạo từ tọa độ. Hãy nhập thông tin và bấm Lưu đối tượng.`,
+    );
   }
 
   function saveSelectedFeature() {
@@ -1321,21 +1577,28 @@ export default function MapClient({ mapState }: MapClientProps) {
     label: string;
     icon: React.ElementType;
   }> = [
-    { mode: 'view', label: 'Chọn', icon: MousePointer2 },
     { mode: 'point', label: 'Vẽ điểm', icon: MapPinPlus },
     { mode: 'line', label: 'Vẽ đường', icon: Route },
     { mode: 'polygon', label: 'Vẽ vùng', icon: Pentagon },
     { mode: 'modify', label: 'Sửa đỉnh', icon: Pencil },
   ];
-  const isDrawMode =
+  const activeDrawGeometryKind: EditableGeometryKind | null =
     editorMode === 'point' ||
     editorMode === 'line' ||
-    editorMode === 'polygon';
+    editorMode === 'polygon'
+      ? editorMode
+      : null;
+  const isDrawMode = activeDrawGeometryKind !== null;
   const draftFeatureCount = editableFeatureCount - savedFeatureCount;
 
   return (
     <div className="relative h-full min-h-[520px] w-full overflow-hidden bg-slate-100 dark:bg-slate-950">
       <div ref={targetRef} className="h-full min-h-[520px] w-full" aria-label="Bản đồ GIS OpenLayers" />
+      <div
+        ref={drawCoordinateOverlayRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute left-0 top-0 z-30 whitespace-nowrap rounded-md border border-border/80 bg-card/95 px-2 py-1 font-mono text-[9px] font-semibold text-foreground opacity-0 shadow-md backdrop-blur-sm transition-opacity will-change-transform"
+      />
 
       <div className="absolute bottom-8 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -1417,15 +1680,67 @@ export default function MapClient({ mapState }: MapClientProps) {
           </Button>
         </div>
 
-        {isDrawMode && (
+        {activeDrawGeometryKind && (
           <div className="mt-2 rounded-md border border-primary/25 bg-primary/5 px-2 py-1.5 text-[8px] leading-4 text-foreground">
-            {editorMode === 'point'
+            {activeDrawGeometryKind === 'point'
               ? 'Nhấp một lần để đặt điểm.'
               : isDrawing
                 ? 'Tiếp tục thêm đỉnh, nhấp đúp để hoàn thành.'
                 : 'Nhấp để bắt đầu, nhấp đúp để hoàn thành.'}{' '}
-            Nhấn <kbd className="rounded border bg-background px-1 font-mono">Esc</kbd>{' '}
+            Nhấn{' '}
+            <kbd className="rounded border bg-background px-1 font-mono">
+              Esc
+            </kbd>{' '}
             để hủy và dừng vẽ.
+
+            <div className="mt-1.5 border-t border-primary/15 pt-1.5">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <p className="font-semibold">
+                  Hoặc tạo{' '}
+                  {editableGeometryLabels[
+                    activeDrawGeometryKind
+                  ].toLocaleLowerCase('vi')}{' '}
+                  bằng tọa độ
+                </p>
+                <span className="text-muted-foreground">Kinh độ, vĩ độ</span>
+              </div>
+              <Textarea
+                value={coordinateInputs[activeDrawGeometryKind]}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setCoordinateInputs((current) => ({
+                    ...current,
+                    [activeDrawGeometryKind]: value,
+                  }));
+                  setCoordinateInputError(null);
+                }}
+                aria-label={`Tọa độ ${editableGeometryLabels[activeDrawGeometryKind]}`}
+                placeholder={coordinateInputPlaceholders[activeDrawGeometryKind]}
+                rows={activeDrawGeometryKind === 'point' ? 1 : 3}
+                className="min-h-10 resize-y bg-background px-2 py-1.5 font-mono text-[9px] leading-4 shadow-none"
+              />
+              {coordinateInputError && (
+                <p className="mt-1 font-medium text-destructive">
+                  {coordinateInputError}
+                </p>
+              )}
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <p className="text-muted-foreground">
+                  {activeDrawGeometryKind === 'point'
+                    ? 'Nhập đúng một dòng.'
+                    : 'Mỗi dòng là một đỉnh.'}
+                </p>
+                <Button
+                  type="button"
+                  size="xs"
+                  onClick={createEditableFeatureFromCoordinates}
+                  className="h-7 gap-1 px-2 text-[9px] shadow-none"
+                >
+                  <Plus className="size-3" />
+                  Tạo {editableGeometryLabels[activeDrawGeometryKind]}
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 
