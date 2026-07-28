@@ -13,15 +13,39 @@ import {
 } from '@/components/ui';
 import { Checkbox, Button } from '@/components/ui';
 import { INITIAL_MAP_LAYERS, GIS_LAYER_GROUPS } from '@/data/mock-map-layers';
-import { Layers, RotateCcw, EyeOff, Eye, Map, Compass, Building2, AlertTriangle, MapPin, HeartPulse, GraduationCap, Landmark, Building } from 'lucide-react';
+import {
+  AlertTriangle,
+  BriefcaseBusiness,
+  Building,
+  Compass,
+  Construction,
+  Eye,
+  EyeOff,
+  GraduationCap,
+  HeartHandshake,
+  HeartPulse,
+  Landmark,
+  Layers,
+  Leaf,
+  Map,
+  MapPin,
+  RotateCcw,
+  Shield,
+  ChevronRight,
+} from 'lucide-react';
 import type { MapState } from '@/components/map/map-client';
 import { cn } from '@/lib/utils';
 
 // Icon map for group icons
 const GROUP_ICONS = {
   Map,
+  BriefcaseBusiness,
   Compass,
-  Building2,
+  Construction,
+  Leaf,
+  GraduationCap,
+  HeartHandshake,
+  Shield,
   AlertTriangle,
 } as const;
 
@@ -43,6 +67,18 @@ interface MapLayerPanelProps {
 
 function LayerPanelContent({ mapState }: { mapState: MapState }) {
   const { activeLayerIds, toggleLayer, enableAllInGroup, disableAllInGroup, resetToDefaults, currentRole } = mapState;
+  const [expandedGroupIds, setExpandedGroupIds] = React.useState(
+    () => new Set(['administrative_population']),
+  );
+
+  function toggleExpandedGroup(groupId: string) {
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }
 
   // Only show layers the current role can see
   const allowedLayers = INITIAL_MAP_LAYERS.filter((l) => {
@@ -97,15 +133,27 @@ function LayerPanelContent({ mapState }: { mapState: MapState }) {
         const IconComp = GROUP_ICONS[group.icon as keyof typeof GROUP_ICONS] ?? Layers;
         const allOn = groupLayers.every((l) => activeLayerIds.includes(l.id));
         const allOff = groupLayers.every((l) => !activeLayerIds.includes(l.id));
+        const isExpanded = expandedGroupIds.has(group.id);
 
         return (
           <div key={group.id} className="space-y-1.5">
             {/* Group header */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-foreground uppercase tracking-wider">
-                <IconComp className="size-3.5 text-primary" />
-                {group.label}
-              </div>
+              <button
+                type="button"
+                onClick={() => toggleExpandedGroup(group.id)}
+                className="flex min-w-0 items-center gap-1 text-left text-[10px] font-bold uppercase tracking-wider text-foreground"
+                aria-expanded={isExpanded}
+              >
+                <ChevronRight
+                  className={cn(
+                    'size-3 shrink-0 text-muted-foreground transition-transform',
+                    isExpanded && 'rotate-90',
+                  )}
+                />
+                <IconComp className="size-3.5 shrink-0 text-primary" />
+                <span className="truncate">{group.label}</span>
+              </button>
               <div className="flex gap-1">
                 <button
                   type="button"
@@ -135,7 +183,7 @@ function LayerPanelContent({ mapState }: { mapState: MapState }) {
             </div>
 
             {/* Layer items */}
-            <div className="space-y-1 pl-1">
+            {isExpanded && <div className="space-y-1 pl-1">
               {groupLayers.map((layer) => {
                 const isActive = activeLayerIds.includes(layer.id);
                 return (
@@ -172,7 +220,7 @@ function LayerPanelContent({ mapState }: { mapState: MapState }) {
                   </label>
                 );
               })}
-            </div>
+            </div>}
           </div>
         );
       })}
@@ -208,8 +256,8 @@ export function MapLayerPanel({ mapState, isOpen, onClose, isMobile }: MapLayerP
   if (!isOpen) return null;
 
   return (
-    <div className="absolute top-17 left-2.5 z-1000 w-70 rounded-xl border border-border/70 bg-card/95 backdrop-blur-sm shadow-lg p-3 space-y-3 max-h-[calc(100zvh-240px)] overflow-y-auto">
-      <div className="flex items-center justify-between">
+    <div className="absolute top-17 bottom-72 left-2.5 z-1000 flex w-76 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-sm">
+      <div className="mb-3 flex shrink-0 items-center justify-between">
         <h3 className="font-bold text-xs text-foreground flex items-center gap-1.5">
           <Layers className="size-3.5 text-primary" />
           Lớp dữ liệu GIS
@@ -223,7 +271,9 @@ export function MapLayerPanel({ mapState, isOpen, onClose, isMobile }: MapLayerP
           ✕
         </button>
       </div>
-      <LayerPanelContent mapState={mapState} />
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <LayerPanelContent mapState={mapState} />
+      </div>
     </div>
   );
 }

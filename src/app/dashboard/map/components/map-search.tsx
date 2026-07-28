@@ -38,7 +38,7 @@ interface MapSearchProps {
   className?: string;
 }
 
-export function MapSearch({ mapState, className }: MapSearchProps) {
+export function MapSearch({ mapState }: MapSearchProps) {
   const [open, setOpen] = React.useState(false);
   const { setFlyToCoords, activeLayerIds, toggleLayer } = mapState;
 
@@ -62,7 +62,18 @@ export function MapSearch({ mapState, className }: MapSearchProps) {
     const poi = MOCK_TOURISM_POIS.find((p) => p.id === id);
     if (!poi) return;
     const [lng, lat] = poi.coordinates;
-    ensureLayerActive('layer-tourism');
+    const tourismLayerMap: Record<string, string> = {
+      tourist_attraction: 'layer-tourist-attractions',
+      historical_site: 'layer-historical-sites',
+      scenic_spot: 'layer-scenic-spots',
+      check_in: 'layer-check-ins',
+    };
+    const layerId = tourismLayerMap[poi.type];
+    if (!layerId) {
+      toast.info('Loại địa điểm này chưa nằm trong catalog bản đồ mới.');
+      return;
+    }
+    ensureLayerActive(layerId);
     setFlyToCoords([lat, lng]);
     toast.success(`Đã định vị: ${poi.name}`);
     setOpen(false);
@@ -74,11 +85,19 @@ export function MapSearch({ mapState, className }: MapSearchProps) {
     const [lng, lat] = fac.coordinates;
     // Ensure appropriate layer is active
     const layerMap: Record<string, string> = {
-      health_station: 'layer-health',
-      school: 'layer-education',
-      cultural_house: 'layer-cultural',
+      health_station: 'layer-health-facilities',
+      school: 'layer-schools',
+      cultural_house: 'layer-cultural-houses',
+      administrative_office: 'layer-administrative-offices',
+      market: 'layer-markets',
+      water_facility: 'layer-water-supply',
+      public_infrastructure: 'layer-technical-infrastructure',
     };
-    const layerId = layerMap[fac.facilityType] ?? 'layer-admin-offices';
+    const layerId = layerMap[fac.facilityType];
+    if (!layerId) {
+      toast.info('Loại công trình này chưa nằm trong catalog bản đồ mới.');
+      return;
+    }
     ensureLayerActive(layerId);
     setFlyToCoords([lat, lng]);
     toast.success(`Đã định vị: ${fac.name}`);
@@ -88,8 +107,12 @@ export function MapSearch({ mapState, className }: MapSearchProps) {
   function handleDisaster(id: string) {
     const zone = MOCK_DISASTER_RISK_ZONES.find((z) => z.id === id);
     if (!zone) return;
-    const isLandslide = zone.riskType === 'landslide';
-    const layerId = isLandslide ? 'layer-disaster-landslide' : 'layer-disaster-flood';
+    const layerId =
+      zone.riskType === 'landslide'
+        ? 'layer-landslide-risk'
+        : zone.riskType === 'flooding'
+          ? 'layer-flood-risk'
+          : 'layer-critical-areas';
     ensureLayerActive(layerId);
 
     if (zone.geometry.type === 'Point') {

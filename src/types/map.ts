@@ -47,11 +47,15 @@ export interface LayerPermission {
 // ─── Layer Groups ─────────────────────────────────────────────────────────────
 
 export type GisLayerGroupId =
-  | 'administrative'
-  | 'tourism'
-  | 'facilities'
-  | 'disaster'
-  | 'planning';
+  | 'administrative_population'
+  | 'economy'
+  | 'tourism_trade_services'
+  | 'land_planning_construction'
+  | 'agriculture_environment'
+  | 'education_health'
+  | 'social_welfare'
+  | 'security_defense'
+  | 'disaster_prevention';
 
 export interface GisLayerGroup {
   id: GisLayerGroupId;

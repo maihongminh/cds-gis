@@ -45,14 +45,32 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { Button, Input, Textarea } from '@/components/ui';
+import {
+  Button,
+  Input,
+  Select as UiSelect,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from '@/components/ui';
 import { MOCK_LAOBAO_COMMUNE_BOUNDARY } from '@/data/mock-laobao-commune-boundary';
 import { MOCK_VILLAGE_BOUNDARIES } from '@/data/mock-laobao-boundary';
 import { MOCK_DISASTER_RISK_ZONES } from '@/data/mock-map-disaster-risks';
-import { INITIAL_MAP_LAYERS } from '@/data/mock-map-layers';
+import {
+  GIS_LAYER_GROUPS,
+  INITIAL_MAP_LAYERS,
+  MAP_LAYER_BY_ID,
+} from '@/data/mock-map-layers';
 import { MOCK_PUBLIC_FACILITIES } from '@/data/mock-map-public-facilities';
 import { MOCK_TOURISM_POIS } from '@/data/mock-map-tourism-pois';
-import { MOCK_CURRENT_STATE, MOCK_PLANNED_STATE } from '@/data/mock-map-scenarios';
+import {
+  MOCK_CURRENT_STATE,
+  MOCK_PLANNED_STATE,
+} from '@/data/mock-map-scenarios';
 import { BASE_LAYERS, LAOBAO_CENTER } from '@/lib/map-config';
 import {
   buildIconPinMarkerSvg,
@@ -334,16 +352,6 @@ function administrativeCommuneStyle(feature: FeatureLike, resolution: number) {
   return style;
 }
 
-const currentStateStyle = new Style({
-  stroke: new Stroke({ color: '#0284c7', width: 2 }),
-  fill: new Fill({ color: 'rgba(56, 189, 248, 0.25)' }),
-});
-
-const plannedStateStyle = new Style({
-  stroke: new Stroke({ color: '#7c3aed', width: 2, lineDash: [8, 5] }),
-  fill: new Fill({ color: 'rgba(167, 139, 250, 0.24)' }),
-});
-
 const draftEditableStyle = new Style({
   stroke: new Stroke({ color: '#ea580c', width: 3, lineDash: [7, 4] }),
   fill: new Fill({ color: 'rgba(249, 115, 22, 0.2)' }),
@@ -353,6 +361,22 @@ const draftEditableStyle = new Style({
     stroke: new Stroke({ color: '#ffffff', width: 2 }),
   }),
 });
+
+const currentPlanningStyle = new Style({
+  stroke: new Stroke({ color: '#0284c7', width: 2 }),
+  fill: new Fill({ color: 'rgba(56, 189, 248, 0.25)' }),
+});
+
+const plannedPlanningStyle = new Style({
+  stroke: new Stroke({ color: '#7c3aed', width: 2, lineDash: [8, 5] }),
+  fill: new Fill({ color: 'rgba(167, 139, 250, 0.24)' }),
+});
+
+function planningComparisonStyle(feature: FeatureLike) {
+  return feature.get('scenario') === 'planned'
+    ? plannedPlanningStyle
+    : currentPlanningStyle;
+}
 
 const savedEditableStyleCache = new globalThis.Map<string, Style>();
 
@@ -424,11 +448,9 @@ function riskStyle(feature: FeatureLike) {
   return style;
 }
 
-function createDisasterFeatures(kind: 'landslide' | 'flood') {
+function createDisasterFeatures(riskTypes: string[]) {
   return MOCK_DISASTER_RISK_ZONES.filter((zone) =>
-    kind === 'landslide'
-      ? zone.riskType === 'landslide'
-      : ['flooding', 'erosion', 'critical_area'].includes(zone.riskType),
+    riskTypes.includes(zone.riskType),
   ).map((zone) => {
     const geometry =
       zone.geometry.type === 'Point'
@@ -568,6 +590,7 @@ export default function MapClient({ mapState }: MapClientProps) {
   const villageLayerRef = React.useRef<VectorLayer | null>(null);
   const locationSearchSourceRef = React.useRef(new VectorSource());
   const editableSourceRef = React.useRef(new VectorSource());
+  const editableLayerRef = React.useRef<VectorLayer | null>(null);
   const selectInteractionRef = React.useRef<Select | null>(null);
   const activeDrawInteractionRef = React.useRef<Draw | null>(null);
   const drawCoordinateOverlayRef = React.useRef<HTMLDivElement>(null);
@@ -585,7 +608,7 @@ export default function MapClient({ mapState }: MapClientProps) {
   const [selectedFeatureStatus, setSelectedFeatureStatus] =
     React.useState<EditableFeatureStatus | null>(null);
   const [selectedFeatureName, setSelectedFeatureName] = React.useState('');
-  const [selectedFeatureCategory, setSelectedFeatureCategory] =
+  const [selectedFeatureLayerId, setSelectedFeatureLayerId] =
     React.useState('');
   const [selectedFeatureDescription, setSelectedFeatureDescription] =
     React.useState('');
@@ -608,7 +631,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     setSelectedGeometryKind(null);
     setSelectedFeatureStatus(null);
     setSelectedFeatureName('');
-    setSelectedFeatureCategory('');
+    setSelectedFeatureLayerId('');
     setSelectedFeatureDescription('');
     setFeatureFormError(null);
   }, []);
@@ -622,7 +645,9 @@ export default function MapClient({ mapState }: MapClientProps) {
       feature.get('status') === 'saved' ? 'saved' : 'draft',
     );
     setSelectedFeatureName(String(feature.get('name') ?? ''));
-    setSelectedFeatureCategory(String(feature.get('category') ?? ''));
+    setSelectedFeatureLayerId(
+      String(feature.get('layerId') ?? feature.get('category') ?? ''),
+    );
     setSelectedFeatureDescription(String(feature.get('description') ?? ''));
     setFeatureFormError(null);
   }, []);
@@ -738,45 +763,74 @@ export default function MapClient({ mapState }: MapClientProps) {
       zIndex: 90,
     });
 
-    const tourismLayer = new VectorLayer({
-      source: new VectorSource({
-        features: MOCK_TOURISM_POIS.map((poi) =>
-          createPointFeature(poi.id, poi.coordinates, {
-            name: poi.name,
-            kind: 'tourism',
-            tourismType: poi.type,
-            villageName: poi.villageName,
-          }),
-        ),
+    const tourismDefinitions = [
+      {
+        id: 'layer-tourist-attractions',
+        type: 'tourist_attraction',
+      },
+      {
+        id: 'layer-historical-sites',
+        type: 'historical_site',
+      },
+      {
+        id: 'layer-scenic-spots',
+        type: 'scenic_spot',
+      },
+      {
+        id: 'layer-check-ins',
+        type: 'check_in',
+      },
+    ];
+    const tourismLayers = tourismDefinitions.map((definition, index) => ({
+      id: definition.id,
+      layer: new VectorLayer({
+        source: new VectorSource({
+          features: MOCK_TOURISM_POIS.filter(
+            (poi) => poi.type === definition.type,
+          ).map((poi) =>
+            createPointFeature(poi.id, poi.coordinates, {
+              name: poi.name,
+              kind: 'tourism',
+              tourismType: poi.type,
+              villageName: poi.villageName,
+              layerId: definition.id,
+            }),
+          ),
+        }),
+        renderBuffer: 48,
+        style: tourismMarkerStyle,
+        zIndex: 60 + index,
       }),
-      renderBuffer: 48,
-      style: tourismMarkerStyle,
-      zIndex: 60,
-    });
+    }));
 
     const facilityDefinitions = [
       {
-        id: 'layer-health',
+        id: 'layer-health-facilities',
         matches: (type: string) => type === 'health_station',
       },
       {
-        id: 'layer-education',
+        id: 'layer-schools',
         matches: (type: string) => type === 'school',
       },
       {
-        id: 'layer-cultural',
+        id: 'layer-cultural-houses',
         matches: (type: string) => type === 'cultural_house',
       },
       {
-        id: 'layer-admin-offices',
-        matches: (type: string) =>
-          [
-            'administrative_office',
-            'market',
-            'sports_facility',
-            'water_facility',
-            'public_infrastructure',
-          ].includes(type),
+        id: 'layer-administrative-offices',
+        matches: (type: string) => type === 'administrative_office',
+      },
+      {
+        id: 'layer-markets',
+        matches: (type: string) => type === 'market',
+      },
+      {
+        id: 'layer-water-supply',
+        matches: (type: string) => type === 'water_facility',
+      },
+      {
+        id: 'layer-technical-infrastructure',
+        matches: (type: string) => type === 'public_infrastructure',
       },
     ];
 
@@ -792,6 +846,7 @@ export default function MapClient({ mapState }: MapClientProps) {
               kind: 'facility',
               facilityType: facility.facilityType,
               villageName: facility.villageName,
+              layerId: definition.id,
             }),
           ),
         }),
@@ -801,31 +856,65 @@ export default function MapClient({ mapState }: MapClientProps) {
       }),
     }));
 
-    const landslideLayer = new VectorLayer({
-      source: new VectorSource({ features: createDisasterFeatures('landslide') }),
-      style: riskStyle,
-      zIndex: 45,
-    });
-    const floodLayer = new VectorLayer({
-      source: new VectorSource({ features: createDisasterFeatures('flood') }),
-      style: riskStyle,
-      zIndex: 46,
-    });
-    const currentStateLayer = new VectorLayer({
-      source: new VectorSource({ features: readGeoJsonFeatures(MOCK_CURRENT_STATE) }),
-      style: currentStateStyle,
+    const disasterDefinitions = [
+      { id: 'layer-landslide-risk', riskTypes: ['landslide'] },
+      { id: 'layer-flood-risk', riskTypes: ['flooding'] },
+      {
+        id: 'layer-critical-areas',
+        riskTypes: ['erosion', 'critical_area'],
+      },
+    ];
+    const disasterLayers = disasterDefinitions.map((definition, index) => ({
+      id: definition.id,
+      layer: new VectorLayer({
+        source: new VectorSource({
+          features: createDisasterFeatures(definition.riskTypes).map(
+            (feature) => {
+              feature.set('layerId', definition.id);
+              return feature;
+            },
+          ),
+        }),
+        style: riskStyle,
+        zIndex: 45 + index,
+      }),
+    }));
+    const planningComparisonLayer = new VectorLayer({
+      source: new VectorSource({
+        features: [
+          ...readGeoJsonFeatures(MOCK_CURRENT_STATE),
+          ...readGeoJsonFeatures(MOCK_PLANNED_STATE),
+        ].map((feature) => {
+          feature.set('layerId', 'layer-land-use-planning');
+          return feature;
+        }),
+      }),
+      style: planningComparisonStyle,
       zIndex: 40,
-    });
-    const plannedStateLayer = new VectorLayer({
-      source: new VectorSource({ features: readGeoJsonFeatures(MOCK_PLANNED_STATE) }),
-      style: plannedStateStyle,
-      zIndex: 41,
     });
     const editableLayer = new VectorLayer({
       source: editableSourceRef.current,
-      style: editableFeatureStyle,
+      style: (feature) => {
+        const layerId = String(feature.get('layerId') ?? '');
+        const layerConfig = MAP_LAYER_BY_ID.get(layerId);
+        const canViewLayer =
+          !layerConfig ||
+          layerConfig.securityLevel !== 'confidential' ||
+          layerConfig.allowedRoles.includes(
+            mapStateRef.current.currentRole ?? '',
+          );
+        if (
+          layerId &&
+          (!mapStateRef.current.activeLayerIds.includes(layerId) ||
+            !canViewLayer)
+        ) {
+          return undefined;
+        }
+        return editableFeatureStyle(feature);
+      },
       zIndex: 100,
     });
+    editableLayerRef.current = editableLayer;
     const locationSearchLayer = new VectorLayer({
       source: locationSearchSourceRef.current,
       declutter: true,
@@ -834,18 +923,30 @@ export default function MapClient({ mapState }: MapClientProps) {
       zIndex: 120,
     });
 
-    const registeredLayers: Array<[string, VectorLayer]> = [
+    const populatedLayers: Array<[string, VectorLayer]> = [
       ['layer-commune', communeLayer],
       ['layer-villages', villageLayer],
       ['layer-village-labels', villageLabelLayer],
-      ['layer-sovereignty-islands', sovereigntyLayer],
-      ['layer-tourism', tourismLayer],
-      ['layer-disaster-landslide', landslideLayer],
-      ['layer-disaster-flood', floodLayer],
-      ['layer-current-state', currentStateLayer],
-      ['layer-planned-state', plannedStateLayer],
+      ...tourismLayers.map(
+        ({ id, layer }) => [id, layer] as [string, VectorLayer],
+      ),
       ...facilityLayers.map(({ id, layer }) => [id, layer] as [string, VectorLayer]),
+      ...disasterLayers.map(
+        ({ id, layer }) => [id, layer] as [string, VectorLayer],
+      ),
+      ['layer-land-use-planning', planningComparisonLayer],
     ];
+    const populatedLayerIds = new Set(populatedLayers.map(([id]) => id));
+    const emptyCatalogLayers: Array<[string, VectorLayer]> = INITIAL_MAP_LAYERS
+      .filter((layer) => !populatedLayerIds.has(layer.id))
+      .map((layer, index) => [
+        layer.id,
+        new VectorLayer({
+          source: new VectorSource(),
+          zIndex: 35 + (index % 10),
+        }),
+      ]);
+    const registeredLayers = [...populatedLayers, ...emptyCatalogLayers];
     registeredLayers.forEach(([id, layer]) => {
       layer.set('layerId', id);
       layer.setVisible(false);
@@ -870,6 +971,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         administrativeBaseLayer,
         graticule,
         ...registeredLayers.map(([, layer]) => layer),
+        sovereigntyLayer,
         editableLayer,
         locationSearchLayer,
       ],
@@ -1037,6 +1139,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       graticuleRef.current = null;
       tileSourceCache.clear();
       villageLayerRef.current = null;
+      editableLayerRef.current = null;
       selectInteractionRef.current = null;
       registry.clear();
     };
@@ -1061,7 +1164,28 @@ export default function MapClient({ mapState }: MapClientProps) {
     layerRegistryRef.current.forEach((layer, id) => {
       layer.setVisible(mapState.activeLayerIds.includes(id) && allowedLayerIds.has(id));
     });
-  }, [mapReady, mapState.activeLayerIds, mapState.currentRole]);
+    editableLayerRef.current?.changed();
+
+    const selection = selectInteractionRef.current?.getFeatures();
+    const selectedFeature = selection?.item(0);
+    const selectedLayerId = String(selectedFeature?.get('layerId') ?? '');
+    if (
+      selectedFeature &&
+      selectedLayerId &&
+      (!mapState.activeLayerIds.includes(selectedLayerId) ||
+        !allowedLayerIds.has(selectedLayerId))
+    ) {
+      selection?.clear();
+      clearSelectedFeatureState();
+      if (editorMode === 'modify') setEditorMode('view');
+    }
+  }, [
+    clearSelectedFeatureState,
+    editorMode,
+    mapReady,
+    mapState.activeLayerIds,
+    mapState.currentRole,
+  ]);
 
   React.useEffect(() => {
     if (!mapReady) return;
@@ -1240,7 +1364,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         event.feature.setProperties({
           objectType: geometryKind,
           name: defaultName,
-          category: '',
+          layerId: '',
           description: '',
           status: 'draft',
           creationMethod: 'draw',
@@ -1459,7 +1583,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       geometry,
       objectType: geometryKind,
       name: `${editableGeometryLabels[geometryKind]} mới ${objectNumber}`,
-      category: '',
+      layerId: '',
       description: '',
       status: 'draft',
       creationMethod: 'coordinates',
@@ -1509,11 +1633,17 @@ export default function MapClient({ mapState }: MapClientProps) {
       setFeatureFormError('Tên đối tượng không được để trống.');
       return;
     }
+    if (!selectedFeatureLayerId || !MAP_LAYER_BY_ID.has(selectedFeatureLayerId)) {
+      setFeatureFormError('Hãy chọn nhóm / loại dữ liệu cho đối tượng.');
+      return;
+    }
 
     const now = new Date().toISOString();
+    const selectedLayer = MAP_LAYER_BY_ID.get(selectedFeatureLayerId);
     feature.setProperties({
       name,
-      category: selectedFeatureCategory.trim(),
+      layerId: selectedFeatureLayerId,
+      category: selectedLayer?.name ?? '',
       description: selectedFeatureDescription.trim(),
       objectType: editableGeometryKind(feature),
       status: 'saved',
@@ -1524,6 +1654,9 @@ export default function MapClient({ mapState }: MapClientProps) {
     editableSourceRef.current.changed();
     setSelectedFeatureStatus('saved');
     setFeatureFormError(null);
+    if (!mapState.activeLayerIds.includes(selectedFeatureLayerId)) {
+      mapState.toggleLayer(selectedFeatureLayerId);
+    }
     refreshEditableFeatureStats();
     toast.success(`Đã lưu ${name} trong phiên làm việc POC.`);
   }
@@ -1590,6 +1723,17 @@ export default function MapClient({ mapState }: MapClientProps) {
       : null;
   const isDrawMode = activeDrawGeometryKind !== null;
   const draftFeatureCount = editableFeatureCount - savedFeatureCount;
+  const editableCatalogGroups = GIS_LAYER_GROUPS.map((group) => ({
+    ...group,
+    layers: group.layers.flatMap((layerId) => {
+      const layer = MAP_LAYER_BY_ID.get(layerId);
+      if (!layer) return [];
+      const canViewLayer =
+        layer.securityLevel !== 'confidential' ||
+        layer.allowedRoles.includes(mapState.currentRole ?? '');
+      return canViewLayer ? [layer] : [];
+    }),
+  })).filter((group) => group.layers.length > 0);
 
   return (
     <div className="relative h-full min-h-[520px] w-full overflow-hidden bg-slate-100 dark:bg-slate-950">
@@ -1600,7 +1744,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         className="pointer-events-none absolute left-0 top-0 z-30 whitespace-nowrap rounded-md border border-border/80 bg-card/95 px-2 py-1 font-mono text-[9px] font-semibold text-foreground opacity-0 shadow-md backdrop-blur-sm transition-opacity will-change-transform"
       />
 
-      <div className="absolute bottom-8 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
+      <div className="absolute bottom-2 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <p className="text-[11px] font-bold text-foreground">Biên tập đối tượng (POC)</p>
@@ -1775,15 +1919,39 @@ export default function MapClient({ mapState }: MapClientProps) {
                 placeholder="Tên đối tượng *"
                 className="h-7 px-2 text-[9px] shadow-none"
               />
-              <Input
-                value={selectedFeatureCategory}
-                onChange={(event) =>
-                  setSelectedFeatureCategory(event.target.value)
-                }
-                aria-label="Nhóm đối tượng"
-                placeholder="Nhóm / loại"
-                className="h-7 px-2 text-[9px] shadow-none"
-              />
+              <UiSelect
+                value={selectedFeatureLayerId || undefined}
+                onValueChange={(value) => {
+                  setSelectedFeatureLayerId(value);
+                  setFeatureFormError(null);
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  aria-label="Nhóm và loại dữ liệu"
+                  className="h-7 bg-background px-2 text-[9px] shadow-none"
+                >
+                  <SelectValue placeholder="Chọn nhóm / loại *" />
+                </SelectTrigger>
+                <SelectContent className="max-h-80 text-xs">
+                  {editableCatalogGroups.map((group) => (
+                    <SelectGroup key={group.id}>
+                      <SelectLabel className="text-[9px] font-bold uppercase text-primary">
+                        {group.label}
+                      </SelectLabel>
+                      {group.layers.map((layer) => (
+                        <SelectItem
+                          key={layer.id}
+                          value={layer.id}
+                          className="cursor-pointer text-[10px]"
+                        >
+                          {layer.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </UiSelect>
             </div>
             <Textarea
               value={selectedFeatureDescription}

@@ -7,9 +7,7 @@ import {
   Button,
   Card,
   CardContent,
-  Separator,
   Input,
-  Badge,
   Dialog,
   DialogContent,
   DialogHeader,
@@ -24,15 +22,11 @@ import {
   SelectValue,
 } from '@/components/ui';
 import {
-  Compass,
   Plus,
-  Edit2,
-  Trash2,
   MapPin,
   Link2,
   ArrowLeft,
   Info,
-  Layers,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ActionMenu, PageHeader } from '@/components/common';
@@ -96,7 +90,7 @@ export default function FeaturesManagementPage() {
     } else {
       const newFeature: SpatialFeature = {
         id: `feat-${Date.now()}`,
-        layerId: formRecord.layerId || 'layer-education',
+        layerId: formRecord.layerId || 'layer-schools',
         name: formRecord.name,
         description: formRecord.description || '',
         geometry,
@@ -108,12 +102,6 @@ export default function FeaturesManagementPage() {
       toast.success('Khởi tạo đối tượng không gian mới thành công!');
     }
     setIsFormOpen(false);
-  };
-
-  const handleDelete = (id: string, name: string) => {
-    if (!confirm(`Xóa đối tượng không gian: ${name}?`)) return;
-    setFeatures((prev) => prev.filter((f) => f.id !== id));
-    toast.info(`Đã gỡ bỏ: ${name}`);
   };
 
   return (
@@ -139,7 +127,7 @@ export default function FeaturesManagementPage() {
           isEditable && (
             <Button
               onClick={() => {
-                setFormRecord({ name: '', description: '', layerId: 'layer-education', coordinatesStr: '106.598, 16.633', linkedEntityType: 'school', linkedEntityId: '' });
+                setFormRecord({ name: '', description: '', layerId: 'layer-schools', coordinatesStr: '106.598, 16.633', linkedEntityType: 'school', linkedEntityId: '' });
                 setIsFormOpen(true);
               }}
               size="sm"
@@ -247,7 +235,7 @@ export default function FeaturesManagementPage() {
             <div className="grid gap-1.5">
               <label className="font-bold text-foreground">Lớp bản đồ phân nhóm</label>
               <Select
-                value={formRecord.layerId || 'layer-education'}
+                value={formRecord.layerId || 'layer-schools'}
                 onValueChange={(val) => setFormRecord((p: any) => ({ ...p, layerId: val }))}
               >
                 <SelectTrigger className="w-full h-9 text-xs bg-background border-border shadow-none cursor-pointer">

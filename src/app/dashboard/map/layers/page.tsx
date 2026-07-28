@@ -7,9 +7,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
-  Separator,
   Input,
   Badge,
   Dialog,
@@ -28,19 +25,17 @@ import {
 import {
   Layers,
   Plus,
-  Edit2,
-  Trash2,
-  Lock,
-  Globe,
-  Settings,
   Info,
   ArrowLeft,
-  CheckCircle2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ActionMenu, PageHeader } from '@/components/common';
 import Link from 'next/link';
-import { INITIAL_MAP_LAYERS, MapLayer, MapDataGroup } from '@/data/mock-map-layers';
+import {
+  GIS_LAYER_GROUPS,
+  INITIAL_MAP_LAYERS,
+  MapLayer,
+} from '@/data/mock-map-layers';
 
 export default function LayersManagementPage() {
   const { currentRole } = useTenant();
@@ -55,6 +50,10 @@ export default function LayersManagementPage() {
   const filteredLayers = layers.filter((l) =>
     l.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     l.source.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const groupLabels = React.useMemo(
+    () => new Map(GIS_LAYER_GROUPS.map((group) => [group.id, group.label])),
+    [],
   );
 
   const handleSaveForm = (e: React.FormEvent) => {
@@ -71,7 +70,7 @@ export default function LayersManagementPage() {
       const newLayer: MapLayer = {
         id: `layer-${Date.now()}`,
         name: formRecord.name,
-        dataGroup: formRecord.dataGroup || 'land',
+        dataGroup: formRecord.dataGroup || 'land_planning_construction',
         geometryType: formRecord.geometryType || 'point',
         order: layers.length + 1,
         visibleByDefault: formRecord.visibleByDefault ?? true,
@@ -86,12 +85,6 @@ export default function LayersManagementPage() {
       toast.success('Đã khởi tạo lớp bản đồ mới thành công!');
     }
     setIsFormOpen(false);
-  };
-
-  const handleDelete = (id: string, name: string) => {
-    if (!confirm(`Xóa cấu hình lớp bản đồ: ${name}?`)) return;
-    setLayers((prev) => prev.filter((l) => l.id !== id));
-    toast.info(`Đã gỡ bỏ cấu hình lớp bản đồ: ${name}`);
   };
 
   return (
@@ -117,7 +110,7 @@ export default function LayersManagementPage() {
           isEditable && (
             <Button
               onClick={() => {
-                setFormRecord({ name: '', dataGroup: 'land', geometryType: 'point', securityLevel: 'public', visibleByDefault: true, color: '#3b82f6', source: '', updateFrequency: 'Hằng năm', status: 'active' });
+                setFormRecord({ name: '', dataGroup: 'land_planning_construction', geometryType: 'point', securityLevel: 'public', visibleByDefault: true, color: '#3b82f6', source: '', updateFrequency: 'Hằng năm', status: 'active' });
                 setIsFormOpen(true);
               }}
               size="sm"
@@ -175,7 +168,9 @@ export default function LayersManagementPage() {
                     <span className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: l.styleConfig.color }} />
                     {l.name}
                   </td>
-                  <td className="py-3.5 px-4 text-muted-foreground uppercase font-bold text-[9px]">{l.dataGroup}</td>
+                  <td className="py-3.5 px-4 text-muted-foreground font-bold text-[9px]">
+                    {groupLabels.get(l.dataGroup) ?? l.dataGroup}
+                  </td>
                   <td className="py-3.5 px-4 text-muted-foreground font-semibold">{l.geometryType === 'point' ? 'Điểm (Point)' : l.geometryType === 'line' ? 'Đường (Line)' : 'Vùng (Polygon)'}</td>
                   <td className="py-3.5 px-4 text-muted-foreground">{l.source}</td>
                   <td className="py-3.5 px-4 text-muted-foreground">{l.updateFrequency}</td>
@@ -225,21 +220,22 @@ export default function LayersManagementPage() {
               <div className="grid gap-1.5">
                 <label className="font-bold text-foreground">Nhóm dữ liệu chuyên ngành</label>
                 <Select
-                  value={formRecord.dataGroup || 'land'}
+                  value={formRecord.dataGroup || 'land_planning_construction'}
                   onValueChange={(val) => setFormRecord((p: any) => ({ ...p, dataGroup: val }))}
                 >
                   <SelectTrigger className="w-full h-9 text-xs bg-background border-border shadow-none cursor-pointer">
                     <SelectValue placeholder="Chọn nhóm" />
                   </SelectTrigger>
                   <SelectContent className="bg-card border-border text-xs">
-                    <SelectItem value="administrative" className="cursor-pointer">Hành chính &amp; Dân cư</SelectItem>
-                    <SelectItem value="economy" className="cursor-pointer">Kinh tế</SelectItem>
-                    <SelectItem value="tourism" className="cursor-pointer">Du lịch &amp; Dịch vụ</SelectItem>
-                    <SelectItem value="land" className="cursor-pointer">Đất đai &amp; Quy hoạch</SelectItem>
-                    <SelectItem value="agriculture" className="cursor-pointer">Nông nghiệp</SelectItem>
-                    <SelectItem value="education" className="cursor-pointer">Giáo dục</SelectItem>
-                    <SelectItem value="health" className="cursor-pointer">Y tế</SelectItem>
-                    <SelectItem value="disaster" className="cursor-pointer">Thiên tai &amp; Khẩn cấp</SelectItem>
+                    {GIS_LAYER_GROUPS.map((group) => (
+                      <SelectItem
+                        key={group.id}
+                        value={group.id}
+                        className="cursor-pointer"
+                      >
+                        {group.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

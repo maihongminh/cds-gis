@@ -1,22 +1,28 @@
-// src/app/dashboard/map/components/map-legend.tsx
-// Map legend — shows only currently active layer symbols.
+// Dynamic map legend generated from the shared GIS layer catalog.
 'use client';
 
 import * as React from 'react';
-import { Eye, MapPin, HeartPulse, GraduationCap, Landmark, Building } from 'lucide-react';
-import { COMMUNE_BOUNDARY_STYLE } from '@/lib/map-style-config';
 import {
-  TOURISM_POI_COLORS,
-  TOURISM_POI_LABELS,
-  FACILITY_COLORS,
-  FACILITY_LABELS,
-  RISK_LEVEL_STYLES,
-  RISK_LEVEL_LABELS,
-} from '@/lib/map-style-config';
-import type { RiskLevel } from '@/types/map';
+  Building,
+  Eye,
+  GraduationCap,
+  HeartPulse,
+  Landmark,
+  MapPin,
+} from 'lucide-react';
+import {
+  GIS_LAYER_GROUPS,
+  MAP_LAYER_BY_ID,
+} from '@/data/mock-map-layers';
 import { cn } from '@/lib/utils';
 
-const RISK_LEVELS: RiskLevel[] = ['critical', 'high', 'medium', 'low'];
+const LAYER_ICONS: Record<string, React.ElementType> = {
+  Building,
+  GraduationCap,
+  HeartPulse,
+  Landmark,
+  MapPin,
+};
 
 interface MapLegendProps {
   activeLayerIds: string[];
@@ -28,34 +34,41 @@ interface MapLegendProps {
 function LegendRow({
   color,
   label,
-  shape = 'circle',
-  outline,
+  geometryType = 'point',
   icon,
 }: {
   color: string;
   label: string;
-  shape?: 'circle' | 'square' | 'polygon';
-  outline?: string;
+  geometryType?: 'point' | 'line' | 'polygon';
   icon?: React.ElementType;
 }) {
   return (
     <div className="flex items-center gap-2 text-[10px]">
       {icon ? (
-        <div style={{ color: color }} className="flex items-center justify-center size-3">
-          {React.createElement(icon, { className: "size-3 shrink-0" })}
+        <div
+          style={{ color }}
+          className="flex size-3 shrink-0 items-center justify-center"
+        >
+          {React.createElement(icon, { className: 'size-3' })}
         </div>
-      ) : shape === 'circle' ? (
+      ) : geometryType === 'point' ? (
         <span
-          className="size-3 rounded-full shrink-0 border-[1.5px] border-white"
+          className="size-3 shrink-0 rounded-full border-[1.5px] border-white"
           style={{ background: color }}
         />
       ) : (
         <span
-          className="size-3 rounded-sm shrink-0 border"
-          style={{ background: color + '30', borderColor: outline ?? color }}
+          className={cn(
+            'size-3 shrink-0 border',
+            geometryType === 'line' ? 'h-0 border-x-0 border-b-0' : 'rounded-sm',
+          )}
+          style={{
+            background: geometryType === 'polygon' ? `${color}30` : undefined,
+            borderColor: color,
+          }}
         />
       )}
-      <span className="text-foreground/80 leading-none">{label}</span>
+      <span className="leading-tight text-foreground/80">{label}</span>
     </div>
   );
 }
@@ -66,36 +79,28 @@ export function MapLegend({
   collapsed = false,
   onToggleCollapse,
 }: MapLegendProps) {
-  const hasCommune = activeLayerIds.includes('layer-commune');
-  const hasVillages = activeLayerIds.includes('layer-villages');
-  const hasSovereigntyIslands = activeLayerIds.includes('layer-sovereignty-islands');
-  const hasTourism = activeLayerIds.includes('layer-tourism');
-  const hasHealth = activeLayerIds.includes('layer-health');
-  const hasEducation = activeLayerIds.includes('layer-education');
-  const hasCultural = activeLayerIds.includes('layer-cultural');
-  const hasAdminOffices = activeLayerIds.includes('layer-admin-offices');
-  const hasLandslide = activeLayerIds.includes('layer-disaster-landslide');
-  const hasFlood = activeLayerIds.includes('layer-disaster-flood');
-
-  const showFacilities = hasHealth || hasEducation || hasCultural || hasAdminOffices;
-  const showDisaster = hasLandslide || hasFlood;
-  const hasContent =
-    hasCommune || hasVillages || hasSovereigntyIslands || hasTourism || showFacilities || showDisaster;
-
-  if (!hasContent) return null;
+  const activeGroups = GIS_LAYER_GROUPS.map((group) => ({
+    ...group,
+    layers: group.layers
+      .filter((layerId) => activeLayerIds.includes(layerId))
+      .map((layerId) => MAP_LAYER_BY_ID.get(layerId))
+      .filter((layer) => layer !== undefined),
+  })).filter(
+    (group) =>
+      group.layers.length > 0 || group.id === 'administrative_population',
+  );
 
   return (
     <div
       className={cn(
-        'rounded-lg border border-border/60 bg-card/95 backdrop-blur-sm shadow-sm overflow-hidden',
-        className
+        'overflow-hidden rounded-lg border border-border/60 bg-card/95 shadow-sm backdrop-blur-sm',
+        className,
       )}
     >
-      {/* Toggle header */}
       <button
         type="button"
         onClick={onToggleCollapse}
-        className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-bold text-foreground hover:bg-muted/40 transition-colors cursor-pointer"
+        className="flex w-full cursor-pointer items-center justify-between px-3 py-2 text-[10px] font-bold text-foreground transition-colors hover:bg-muted/40"
         aria-label={collapsed ? 'Mở chú giải' : 'Thu gọn chú giải'}
       >
         <span className="flex items-center gap-1.5">
@@ -106,92 +111,49 @@ export function MapLegend({
       </button>
 
       {!collapsed && (
-        <div className="px-3 pb-3 space-y-3 border-t border-border/50">
-          {/* Administrative */}
-          {(hasCommune || hasVillages || hasSovereigntyIslands) && (
-            <div className="space-y-1.5 pt-2">
-              <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider">
-                Hành chính
+        <div className="max-h-[55vh] space-y-3 overflow-y-auto border-t border-border/50 px-3 pb-3">
+          {activeGroups.map((group) => (
+            <div key={group.id} className="space-y-1.5 pt-2">
+              <p className="text-[8px] font-bold uppercase tracking-wider text-muted-foreground">
+                {group.label}
               </p>
-              {hasCommune && (
-                <LegendRow
-                  color={COMMUNE_BOUNDARY_STYLE.fillColor}
-                  outline={COMMUNE_BOUNDARY_STYLE.color}
-                  label="Ranh giới xã Lao Bảo"
-                  shape="polygon"
-                />
+              {group.layers.map((layer) =>
+                layer.id === 'layer-land-use-planning' ? (
+                  <React.Fragment key={layer.id}>
+                    <LegendRow
+                      color="#0284c7"
+                      label="Hiện trạng sử dụng đất (minh họa)"
+                      geometryType="polygon"
+                    />
+                    <LegendRow
+                      color="#7c3aed"
+                      label="Kế hoạch sử dụng đất (minh họa)"
+                      geometryType="polygon"
+                    />
+                  </React.Fragment>
+                ) : (
+                  <LegendRow
+                    key={layer.id}
+                    color={layer.styleConfig.color}
+                    label={layer.shortLabel ?? layer.name}
+                    geometryType={layer.geometryType}
+                    icon={
+                      layer.styleConfig.icon
+                        ? LAYER_ICONS[layer.styleConfig.icon]
+                        : undefined
+                    }
+                  />
+                ),
               )}
-              {hasVillages && (
-                <LegendRow
-                  color="#94a3b820"
-                  outline="#64748b"
-                  label="Ranh giới 12 thôn"
-                  shape="polygon"
-                />
-              )}
-              {hasSovereigntyIslands && (
+              {group.id === 'administrative_population' && (
                 <LegendRow
                   color="#dc2626"
-                  outline="#facc15"
                   label="Hoàng Sa, Trường Sa (Việt Nam)"
+                  icon={MapPin}
                 />
               )}
             </div>
-          )}
-
-          {/* Tourism */}
-          {hasTourism && (
-            <div className="space-y-1.5">
-              <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider">
-                Du lịch & Di tích
-              </p>
-              {(['tourist_attraction', 'historical_site', 'scenic_spot'] as const).map((t) => (
-                <LegendRow key={t} color={TOURISM_POI_COLORS[t]} label={TOURISM_POI_LABELS[t]} icon={MapPin} />
-              ))}
-            </div>
-          )}
-
-          {/* Facilities */}
-          {showFacilities && (
-            <div className="space-y-1.5">
-              <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider">
-                Công trình công cộng
-              </p>
-              {hasHealth && (
-                <LegendRow color={FACILITY_COLORS.health_station} label={FACILITY_LABELS.health_station} icon={HeartPulse} />
-              )}
-              {hasEducation && (
-                <LegendRow color={FACILITY_COLORS.school} label={FACILITY_LABELS.school} icon={GraduationCap} />
-              )}
-              {hasCultural && (
-                <LegendRow color={FACILITY_COLORS.cultural_house} label={FACILITY_LABELS.cultural_house} icon={Landmark} />
-              )}
-              {hasAdminOffices && (
-                <LegendRow color={FACILITY_COLORS.administrative_office} label="Hành chính & Hạ tầng" icon={Building} />
-              )}
-            </div>
-          )}
-
-          {/* Disaster */}
-          {showDisaster && (
-            <div className="space-y-1.5">
-              <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider">
-                Mức độ rủi ro
-              </p>
-              {RISK_LEVELS.map((level) => {
-                const s = RISK_LEVEL_STYLES[level];
-                return (
-                  <LegendRow
-                    key={level}
-                    color={s.fillColor}
-                    outline={s.color}
-                    label={RISK_LEVEL_LABELS[level]}
-                    shape="polygon"
-                  />
-                );
-              })}
-            </div>
-          )}
+          ))}
         </div>
       )}
     </div>
