@@ -256,7 +256,7 @@ export function MapLayerPanel({ mapState, isOpen, onClose, isMobile }: MapLayerP
   if (!isOpen) return null;
 
   return (
-    <div className="absolute top-17 bottom-72 left-2.5 z-1000 flex w-76 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-sm">
+    <div className="absolute top-17 bottom-76 left-2.5 z-1000 flex w-76 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-sm">
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <h3 className="font-bold text-xs text-foreground flex items-center gap-1.5">
           <Layers className="size-3.5 text-primary" />

@@ -71,6 +71,7 @@ export default function MapPage() {
   const [isLayerPanelOpen, setIsLayerPanelOpen] = React.useState(false);
   const [isLegendCollapsed, setIsLegendCollapsed] = React.useState(false);
   const [isAlertCollapsed, setIsAlertCollapsed] = React.useState(true);
+  const restoreLayerPanelAfterEditRef = React.useRef(false);
 
   // Detect mobile via window width (hydration-safe)
   const [isMobile, setIsMobile] = React.useState(false);
@@ -121,11 +122,29 @@ export default function MapPage() {
     setFlyToCoords([...COMMUNE_CENTER, 14]);
   }
 
+  const handleObjectEditorOpen = React.useCallback(() => {
+    setIsLayerPanelOpen((isOpen) => {
+      if (isOpen) restoreLayerPanelAfterEditRef.current = true;
+      return false;
+    });
+  }, []);
+
+  const handleObjectEditorClose = React.useCallback(() => {
+    if (!restoreLayerPanelAfterEditRef.current) return;
+    restoreLayerPanelAfterEditRef.current = false;
+    setIsLayerPanelOpen(true);
+  }, []);
+
   return (
     <div className="relative w-[calc(100%+2rem)] md:w-[calc(100%+3rem)] xl:w-[calc(100%+4rem)] h-[calc(100vh-4rem)] -m-4 md:-m-6 xl:-m-8 overflow-hidden animate-fade-in">
       {/* Map container */}
       <div className="absolute inset-0 z-0">
-        <MapShell mapState={mapState} minHeight={480} />
+        <MapShell
+          mapState={mapState}
+          onObjectEditorOpen={handleObjectEditorOpen}
+          onObjectEditorClose={handleObjectEditorClose}
+          minHeight={480}
+        />
       </div>
 
       {/* ── Toolbar — top center ── */}

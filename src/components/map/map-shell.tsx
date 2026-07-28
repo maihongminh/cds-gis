@@ -9,7 +9,11 @@ import { MapErrorBoundary } from './map-error-boundary';
 import type { MapState } from './map-client';
 
 // Dynamic import keeps the GIS engine out of the initial dashboard bundle.
-const MapClient = dynamic<{ mapState: MapState }>(
+const MapClient = dynamic<{
+  mapState: MapState;
+  onObjectEditorOpen?: () => void;
+  onObjectEditorClose?: () => void;
+}>(
   () => import('./map-client').then((m) => ({ default: m.default })),
   {
     ssr: false,
@@ -19,15 +23,26 @@ const MapClient = dynamic<{ mapState: MapState }>(
 
 interface MapShellProps {
   mapState: MapState;
+  onObjectEditorOpen?: () => void;
+  onObjectEditorClose?: () => void;
   /** Optional: minimum height override */
   minHeight?: number;
 }
 
-export function MapShell({ mapState, minHeight = 500 }: MapShellProps) {
+export function MapShell({
+  mapState,
+  onObjectEditorOpen,
+  onObjectEditorClose,
+  minHeight = 500,
+}: MapShellProps) {
   return (
     <MapErrorBoundary>
       <div className="w-full h-full" style={{ minHeight }}>
-        <MapClient mapState={mapState} />
+        <MapClient
+          mapState={mapState}
+          onObjectEditorOpen={onObjectEditorOpen}
+          onObjectEditorClose={onObjectEditorClose}
+        />
       </div>
     </MapErrorBoundary>
   );

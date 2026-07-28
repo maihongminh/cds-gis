@@ -12,6 +12,7 @@ import LayerGroup from 'ol/layer/Group';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import OlMap from 'ol/Map';
+import Overlay from 'ol/Overlay';
 import View from 'ol/View';
 import { defaults as defaultControls } from 'ol/control/defaults';
 import Draw from 'ol/interaction/Draw';
@@ -109,6 +110,15 @@ export interface LocationSearchMarker {
 type EditorMode = 'view' | 'point' | 'line' | 'polygon' | 'modify';
 type EditableGeometryKind = 'point' | 'line' | 'polygon';
 type EditableFeatureStatus = 'draft' | 'saved';
+
+interface SavedObjectPopup {
+  featureId: string;
+  name: string;
+  category: string;
+  description: string;
+  geometryKind: EditableGeometryKind;
+  layerId: string;
+}
 
 const geoJsonFormat = new GeoJSON();
 
@@ -418,11 +428,10 @@ function editableFeatureStyle(feature: FeatureLike) {
   );
   const markerIcon =
     layerConfig?.styleConfig.markerIcon ??
-    catalogMarkerIconFallbacks[layerConfig?.styleConfig.icon ?? ''] ??
-    'building';
+    catalogMarkerIconFallbacks[layerConfig?.styleConfig.icon ?? ''];
   const geometryType = feature.getGeometry()?.getType() ?? '';
   const name = String(feature.get('name') ?? 'Đối tượng');
-  const cacheKey = `${status}:${geometryType}:${layerId}:${name}:${color}:${fillColor}:${markerIcon}`;
+  const cacheKey = `${status}:${geometryType}:${layerId}:${name}:${color}:${fillColor}:${markerIcon ?? 'circle'}`;
   const cachedStyle = savedEditableStyleCache.get(cacheKey);
   if (cachedStyle) return cachedStyle;
 
@@ -435,12 +444,23 @@ function editableFeatureStyle(feature: FeatureLike) {
     fill: new Fill({ color: `${fillColor}33` }),
     image:
       geometryType === 'Point'
-        ? markerImage(color, markerIcon, 30)
+        ? markerIcon
+          ? markerImage(color, markerIcon, 30)
+          : new CircleStyle({
+              radius: layerConfig?.styleConfig.radius ?? 7,
+              fill: new Fill({ color }),
+              stroke: new Stroke({ color: '#ffffff', width: 2 }),
+            })
         : undefined,
     text: new Text({
       text: name,
       placement: geometryType === 'LineString' ? 'line' : 'point',
-      offsetY: geometryType === 'Point' ? -48 : 0,
+      offsetY:
+        geometryType === 'Point'
+          ? markerIcon
+            ? -48
+            : -18
+          : 0,
       font: '600 10px var(--font-be-vietnam-pro), sans-serif',
       fill: new Fill({ color: '#0f172a' }),
       stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
@@ -612,9 +632,15 @@ function parseCoordinateInput(
 
 interface MapClientProps {
   mapState: MapState;
+  onObjectEditorOpen?: () => void;
+  onObjectEditorClose?: () => void;
 }
 
-export default function MapClient({ mapState }: MapClientProps) {
+export default function MapClient({
+  mapState,
+  onObjectEditorOpen,
+  onObjectEditorClose,
+}: MapClientProps) {
   const targetRef = React.useRef<HTMLDivElement>(null);
   const mapRef = React.useRef<OlMap | null>(null);
   const mapStateRef = React.useRef(mapState);
@@ -634,6 +660,8 @@ export default function MapClient({ mapState }: MapClientProps) {
   const selectInteractionRef = React.useRef<Select | null>(null);
   const activeDrawInteractionRef = React.useRef<Draw | null>(null);
   const drawCoordinateOverlayRef = React.useRef<HTMLDivElement>(null);
+  const objectPopupElementRef = React.useRef<HTMLDivElement>(null);
+  const objectPopupOverlayRef = React.useRef<Overlay | null>(null);
   const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
   const eventKeysRef = React.useRef<EventsKey[]>([]);
 
@@ -656,6 +684,8 @@ export default function MapClient({ mapState }: MapClientProps) {
     React.useState('#ea580c');
   const [selectedFeatureFillColor, setSelectedFeatureFillColor] =
     React.useState('#fb923c');
+  const [savedObjectPopup, setSavedObjectPopup] =
+    React.useState<SavedObjectPopup | null>(null);
   const [featureFormError, setFeatureFormError] = React.useState<string | null>(
     null,
   );
@@ -727,6 +757,59 @@ export default function MapClient({ mapState }: MapClientProps) {
       features.filter((feature) => feature.get('status') === 'saved').length,
     );
   }, []);
+
+  const closeSavedObjectPopup = React.useCallback(() => {
+    objectPopupOverlayRef.current?.setPosition(undefined);
+    setSavedObjectPopup(null);
+  }, []);
+
+  const openSavedObjectPopup = React.useCallback(
+    (feature: Feature, coordinate: number[]) => {
+      const featureId = String(feature.getId() ?? '');
+      const layerId = String(feature.get('layerId') ?? '');
+      if (!featureId) return;
+
+      setSavedObjectPopup({
+        featureId,
+        name: String(feature.get('name') ?? 'Đối tượng chưa đặt tên'),
+        category: String(
+          feature.get('category') ??
+            MAP_LAYER_BY_ID.get(layerId)?.name ??
+            'Chưa phân loại',
+        ),
+        description: String(feature.get('description') ?? ''),
+        geometryKind: editableGeometryKind(feature) ?? 'point',
+        layerId,
+      });
+      objectPopupOverlayRef.current?.setPosition(coordinate);
+    },
+    [],
+  );
+
+  React.useEffect(() => {
+    if (!savedObjectPopup) return;
+
+    const handlePointerDownOutside = (event: PointerEvent) => {
+      const popupElement = objectPopupElementRef.current;
+      if (
+        popupElement &&
+        event.target instanceof Node &&
+        popupElement.contains(event.target)
+      ) {
+        return;
+      }
+      closeSavedObjectPopup();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownOutside, true);
+    return () => {
+      document.removeEventListener(
+        'pointerdown',
+        handlePointerDownOutside,
+        true,
+      );
+    };
+  }, [closeSavedObjectPopup, savedObjectPopup]);
 
   React.useEffect(() => {
     mapStateRef.current = mapState;
@@ -1053,6 +1136,16 @@ export default function MapClient({ mapState }: MapClientProps) {
       pixelRatio: Math.min(window.devicePixelRatio || 1, 1.25),
     });
     mapRef.current = map;
+    if (objectPopupElementRef.current) {
+      const objectPopupOverlay = new Overlay({
+        element: objectPopupElementRef.current,
+        positioning: 'bottom-center',
+        offset: [0, -12],
+        stopEvent: true,
+      });
+      objectPopupOverlayRef.current = objectPopupOverlay;
+      map.addOverlay(objectPopupOverlay);
+    }
 
     const loadedAdministrativeProvinceIds = new Set<string>();
     const loadingAdministrativeProvinceIds = new Set<string>();
@@ -1129,6 +1222,7 @@ export default function MapClient({ mapState }: MapClientProps) {
 
     const selection = new Select({
       layers: [editableLayer],
+      filter: (feature) => feature.get('status') !== 'saved',
       style: (feature) => [
         selectedEditableStyle,
         editableFeatureStyle(feature),
@@ -1148,13 +1242,45 @@ export default function MapClient({ mapState }: MapClientProps) {
       const feature = event.selected[0];
       if (!feature) {
         clearSelectedFeatureState();
+        onObjectEditorClose?.();
         return;
       }
+      onObjectEditorOpen?.();
       loadSelectedFeatureState(feature);
     });
     eventKeysRef.current.push(selectionKey);
 
     const clickKey = map.on('singleclick', (event) => {
+      const savedEditableFeature = map.forEachFeatureAtPixel(
+        event.pixel,
+        (feature) => {
+          if (
+            feature instanceof Feature &&
+            feature.get('status') === 'saved'
+          ) {
+            return feature;
+          }
+          return undefined;
+        },
+        {
+          hitTolerance: 8,
+          layerFilter: (layer) => layer === editableLayer,
+        },
+      );
+      if (savedEditableFeature) {
+        selectInteractionRef.current?.getFeatures().clear();
+        clearSelectedFeatureState();
+        const savedGeometry = savedEditableFeature.getGeometry();
+        openSavedObjectPopup(
+          savedEditableFeature,
+          savedGeometry instanceof Point
+            ? savedGeometry.getCoordinates()
+            : event.coordinate,
+        );
+        return;
+      }
+
+      closeSavedObjectPopup();
       const villageFeature = map.forEachFeatureAtPixel(
         event.pixel,
         (feature) => feature,
@@ -1207,6 +1333,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       eventKeysRef.current = [];
       map.setTarget(undefined);
       mapRef.current = null;
+      objectPopupOverlayRef.current = null;
       baseLayerRef.current = null;
       baseOverlayLayerRef.current = null;
       styledBaseLayerRef.current = null;
@@ -1222,7 +1349,11 @@ export default function MapClient({ mapState }: MapClientProps) {
     };
   }, [
     clearSelectedFeatureState,
+    closeSavedObjectPopup,
     loadSelectedFeatureState,
+    onObjectEditorClose,
+    onObjectEditorOpen,
+    openSavedObjectPopup,
     refreshEditableFeatureStats,
   ]);
 
@@ -1256,12 +1387,22 @@ export default function MapClient({ mapState }: MapClientProps) {
       clearSelectedFeatureState();
       if (editorMode === 'modify') setEditorMode('view');
     }
+
+    if (
+      savedObjectPopup?.layerId &&
+      (!mapState.activeLayerIds.includes(savedObjectPopup.layerId) ||
+        !allowedLayerIds.has(savedObjectPopup.layerId))
+    ) {
+      closeSavedObjectPopup();
+    }
   }, [
+    closeSavedObjectPopup,
     clearSelectedFeatureState,
     editorMode,
     mapReady,
     mapState.activeLayerIds,
     mapState.currentRole,
+    savedObjectPopup,
   ]);
 
   React.useEffect(() => {
@@ -1451,6 +1592,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         const selectedFeatures = selection?.getFeatures();
         selectedFeatures?.clear();
         selectedFeatures?.push(event.feature);
+        onObjectEditorOpen?.();
         loadSelectedFeatureState(event.feature);
         setEditorMode('view');
         toast.info(
@@ -1486,7 +1628,12 @@ export default function MapClient({ mapState }: MapClientProps) {
         activeDrawInteractionRef.current = null;
       }
     };
-  }, [editorMode, loadSelectedFeatureState, mapReady]);
+  }, [
+    editorMode,
+    loadSelectedFeatureState,
+    mapReady,
+    onObjectEditorOpen,
+  ]);
 
   React.useEffect(() => {
     const map = mapRef.current;
@@ -1590,6 +1737,14 @@ export default function MapClient({ mapState }: MapClientProps) {
       return;
     }
 
+    if (
+      nextMode === 'point' ||
+      nextMode === 'line' ||
+      nextMode === 'polygon'
+    ) {
+      closeSavedObjectPopup();
+    }
+
     setCoordinateInputError(null);
     const currentlyDrawing =
       editorMode === 'point' ||
@@ -1673,6 +1828,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     const selectedFeatures = selectInteractionRef.current?.getFeatures();
     selectedFeatures?.clear();
     selectedFeatures?.push(feature);
+    onObjectEditorOpen?.();
     loadSelectedFeatureState(feature);
     setCoordinateInputs((current) => ({ ...current, [geometryKind]: '' }));
     setCoordinateInputError(null);
@@ -1737,12 +1893,15 @@ export default function MapClient({ mapState }: MapClientProps) {
     feature.unset('previewFillColor', true);
     feature.changed();
     editableSourceRef.current.changed();
-    setSelectedFeatureStatus('saved');
     setFeatureFormError(null);
     if (!mapState.activeLayerIds.includes(selectedFeatureLayerId)) {
       mapState.toggleLayer(selectedFeatureLayerId);
     }
     refreshEditableFeatureStats();
+    selectInteractionRef.current?.getFeatures().clear();
+    clearSelectedFeatureState();
+    if (editorMode === 'modify') setEditorMode('view');
+    onObjectEditorClose?.();
     toast.success(`Đã lưu ${name} trong phiên làm việc POC.`);
   }
 
@@ -1756,6 +1915,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     selection?.clear();
     clearSelectedFeatureState();
     if (editorMode === 'modify') setEditorMode('view');
+    onObjectEditorClose?.();
   }
 
   function previewSelectedFeatureColor(
@@ -1768,6 +1928,24 @@ export default function MapClient({ mapState }: MapClientProps) {
     feature.changed();
   }
 
+  function editSavedObjectFromPopup() {
+    if (!savedObjectPopup) return;
+    const feature = editableSourceRef.current.getFeatureById(
+      savedObjectPopup.featureId,
+    );
+    if (!feature) {
+      closeSavedObjectPopup();
+      return;
+    }
+
+    closeSavedObjectPopup();
+    const selection = selectInteractionRef.current?.getFeatures();
+    selection?.clear();
+    selection?.push(feature);
+    loadSelectedFeatureState(feature);
+    onObjectEditorOpen?.();
+  }
+
   function deleteSelectedFeature() {
     const selection = selectInteractionRef.current?.getFeatures();
     const feature = selection?.item(0);
@@ -1776,6 +1954,7 @@ export default function MapClient({ mapState }: MapClientProps) {
     selection?.clear();
     clearSelectedFeatureState();
     if (editorMode === 'modify') setEditorMode('view');
+    onObjectEditorClose?.();
     toast.success('Đã xóa đối tượng.');
   }
 
@@ -1786,6 +1965,8 @@ export default function MapClient({ mapState }: MapClientProps) {
     editableSourceRef.current.clear();
     selectInteractionRef.current?.getFeatures().clear();
     clearSelectedFeatureState();
+    closeSavedObjectPopup();
+    onObjectEditorClose?.();
     toast.success('Đã xóa toàn bộ đối tượng POC.');
   }
 
@@ -1844,18 +2025,69 @@ export default function MapClient({ mapState }: MapClientProps) {
         aria-hidden="true"
         className="pointer-events-none absolute left-0 top-0 z-30 whitespace-nowrap rounded-md border border-border/80 bg-card/95 px-2 py-1 font-mono text-[9px] font-semibold text-foreground opacity-0 shadow-md backdrop-blur-sm transition-opacity will-change-transform"
       />
+      <div
+        ref={objectPopupElementRef}
+        className={cn(
+          'relative z-[1100] flex min-h-44 w-72 flex-col rounded-xl border border-border/80 bg-card/98 p-3.5 text-foreground shadow-xl backdrop-blur-md',
+          !savedObjectPopup && 'hidden',
+        )}
+      >
+        {savedObjectPopup && (
+          <>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-bold">
+                  {savedObjectPopup.name}
+                </p>
+                <p className="mt-1 truncate text-[9px] font-medium text-primary">
+                  {savedObjectPopup.category}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeSavedObjectPopup}
+                className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Đóng thông tin đối tượng"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+
+            <p className="mt-2.5 max-h-24 flex-1 overflow-y-auto whitespace-pre-wrap break-words pr-1 text-[11px] leading-5 text-muted-foreground">
+              {savedObjectPopup.description || 'Chưa có mô tả cho đối tượng này.'}
+            </p>
+
+            <div className="mt-2.5 flex items-center justify-between border-t border-border/60 pt-2.5">
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[9px]">
+                {editableGeometryLabels[savedObjectPopup.geometryKind]}
+              </span>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={editSavedObjectFromPopup}
+                className="h-7 gap-1 px-2 text-[10px] shadow-none"
+              >
+                <Pencil className="size-3" />
+                Chỉnh sửa
+              </Button>
+            </div>
+            <span className="absolute -bottom-1.5 left-1/2 size-3 -translate-x-1/2 rotate-45 border-r border-b border-border/80 bg-card" />
+          </>
+        )}
+      </div>
 
       <div className="absolute bottom-2 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
-            <p className="text-[11px] font-bold text-foreground">Biên tập đối tượng (POC)</p>
-            <p className="text-[8px] text-muted-foreground">
+            <p className="text-xs font-bold text-foreground">Biên tập đối tượng (POC)</p>
+            <p className="text-[9px] text-muted-foreground">
               {savedFeatureCount} đã lưu · {draftFeatureCount} nháp · lưu trong
               phiên, chưa gửi backend
             </p>
           </div>
           {selectedFeatureId && (
-            <span className="max-w-32 truncate rounded bg-orange-500/10 px-1.5 py-0.5 font-mono text-[8px] text-orange-700 dark:text-orange-300">
+            <span className="max-w-32 truncate rounded bg-orange-500/10 px-1.5 py-0.5 font-mono text-[9px] text-orange-700 dark:text-orange-300">
               {selectedFeatureId}
             </span>
           )}
@@ -1870,7 +2102,7 @@ export default function MapClient({ mapState }: MapClientProps) {
               variant={editorMode === mode ? 'default' : 'outline'}
               onClick={() => handleEditorModeChange(mode)}
               disabled={mode === 'modify' && !selectedFeatureId}
-              className={cn('h-7 gap-1 px-2 text-[9px] shadow-none', editorMode === mode && 'border-primary')}
+              className={cn('h-7 gap-1 px-2 text-[10px] shadow-none', editorMode === mode && 'border-primary')}
               title={label}
             >
               <Icon className="size-3" />
@@ -1883,7 +2115,7 @@ export default function MapClient({ mapState }: MapClientProps) {
               size="xs"
               variant="outline"
               onClick={() => handleEditorModeChange('view')}
-              className="h-7 gap-1 px-2 text-[9px] shadow-none"
+              className="h-7 gap-1 px-2 text-[10px] shadow-none"
               title="Dừng vẽ (Esc)"
             >
               <X className="size-3" />
@@ -1896,7 +2128,7 @@ export default function MapClient({ mapState }: MapClientProps) {
             variant="outline"
             onClick={deleteSelectedFeature}
             disabled={!selectedFeatureId}
-            className="h-7 gap-1 px-2 text-[9px] text-destructive shadow-none"
+            className="h-7 gap-1 px-2 text-[10px] text-destructive shadow-none"
             title="Xóa đối tượng đang chọn"
           >
             <Trash2 className="size-3" />
@@ -1907,7 +2139,7 @@ export default function MapClient({ mapState }: MapClientProps) {
             variant="outline"
             onClick={clearEditableFeatures}
             disabled={editableFeatureCount === 0}
-            className="h-7 gap-1 px-2 text-[9px] shadow-none"
+            className="h-7 gap-1 px-2 text-[10px] shadow-none"
             title="Xóa toàn bộ bản nháp"
           >
             <Eraser className="size-3" />
@@ -1918,7 +2150,7 @@ export default function MapClient({ mapState }: MapClientProps) {
             variant="outline"
             onClick={exportEditableGeoJson}
             disabled={editableFeatureCount === 0}
-            className="h-7 gap-1 px-2 text-[9px] shadow-none"
+            className="h-7 gap-1 px-2 text-[10px] shadow-none"
             title="Xuất GeoJSON"
           >
             <Download className="size-3" />
@@ -1926,7 +2158,7 @@ export default function MapClient({ mapState }: MapClientProps) {
         </div>
 
         {activeDrawGeometryKind && (
-          <div className="mt-2 rounded-md border border-primary/25 bg-primary/5 px-2 py-1.5 text-[8px] leading-4 text-foreground">
+          <div className="mt-2 rounded-md border border-primary/25 bg-primary/5 px-2 py-1.5 text-[9px] leading-4 text-foreground">
             {activeDrawGeometryKind === 'point'
               ? 'Nhấp một lần để đặt điểm.'
               : isDrawing
@@ -1962,7 +2194,7 @@ export default function MapClient({ mapState }: MapClientProps) {
                 aria-label={`Tọa độ ${editableGeometryLabels[activeDrawGeometryKind]}`}
                 placeholder={coordinateInputPlaceholders[activeDrawGeometryKind]}
                 rows={activeDrawGeometryKind === 'point' ? 1 : 3}
-                className="min-h-10 resize-y bg-background px-2 py-1.5 font-mono text-[9px] leading-4 shadow-none"
+                className="min-h-10 resize-y bg-background px-2 py-1.5 font-mono text-[10px] leading-4 shadow-none md:text-[10px]"
               />
               {coordinateInputError && (
                 <p className="mt-1 font-medium text-destructive">
@@ -1979,7 +2211,7 @@ export default function MapClient({ mapState }: MapClientProps) {
                   type="button"
                   size="xs"
                   onClick={createEditableFeatureFromCoordinates}
-                  className="h-7 gap-1 px-2 text-[9px] shadow-none"
+                  className="h-7 gap-1 px-2 text-[10px] shadow-none"
                 >
                   <Plus className="size-3" />
                   Tạo {editableGeometryLabels[activeDrawGeometryKind]}
@@ -1992,16 +2224,16 @@ export default function MapClient({ mapState }: MapClientProps) {
         {selectedFeatureId && selectedGeometryKind && (
           <div className="mt-2 rounded-lg border border-border bg-background/70 p-2">
             <div className="mb-1.5 flex items-center justify-between gap-2">
-              <p className="text-[9px] font-semibold text-foreground">
+              <p className="text-[10px] font-semibold text-foreground">
                 Thông tin {editableGeometryLabels[selectedGeometryKind].toLocaleLowerCase('vi')}
               </p>
               <div className="flex items-center gap-1">
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[8px] text-muted-foreground">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground">
                   {editableGeometryLabels[selectedGeometryKind]}
                 </span>
                 <span
                   className={cn(
-                    'rounded px-1.5 py-0.5 text-[8px] font-medium',
+                    'rounded px-1.5 py-0.5 text-[9px] font-medium',
                     selectedFeatureStatus === 'saved'
                       ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                       : 'bg-orange-500/10 text-orange-700 dark:text-orange-300',
@@ -2018,7 +2250,7 @@ export default function MapClient({ mapState }: MapClientProps) {
                 onChange={(event) => setSelectedFeatureName(event.target.value)}
                 aria-label="Tên đối tượng"
                 placeholder="Tên đối tượng *"
-                className="h-7 px-2 text-[9px] shadow-none"
+                className="h-7 px-2 font-sans text-[10px] font-normal shadow-none md:text-[10px]"
               />
               <UiSelect
                 value={selectedFeatureLayerId || undefined}
@@ -2044,21 +2276,21 @@ export default function MapClient({ mapState }: MapClientProps) {
                 <SelectTrigger
                   size="sm"
                   aria-label="Nhóm và loại dữ liệu"
-                  className="h-7 bg-background px-2 text-[9px] shadow-none"
+                  className="h-7 bg-background px-2 text-[10px] shadow-none"
                 >
                   <SelectValue placeholder="Chọn nhóm / loại *" />
                 </SelectTrigger>
                 <SelectContent className="z-[1100] max-h-80 text-xs">
                   {editableCatalogGroups.map((group) => (
                     <SelectGroup key={group.id}>
-                      <SelectLabel className="text-[9px] font-bold uppercase text-primary">
+                      <SelectLabel className="text-[10px] font-bold uppercase text-primary">
                         {group.label}
                       </SelectLabel>
                       {group.layers.map((layer) => (
                         <SelectItem
                           key={layer.id}
                           value={layer.id}
-                          className="cursor-pointer text-[10px]"
+                          className="cursor-pointer text-[11px]"
                         >
                           {layer.name}
                         </SelectItem>
@@ -2076,7 +2308,7 @@ export default function MapClient({ mapState }: MapClientProps) {
               aria-label="Mô tả đối tượng"
               placeholder="Mô tả, ghi chú..."
               rows={2}
-              className="mt-1.5 min-h-14 resize-none px-2 py-1.5 text-[9px] shadow-none"
+              className="mt-1.5 min-h-14 resize-none px-2 py-1.5 font-sans text-[10px] leading-4 font-normal shadow-none md:text-[10px]"
             />
             <div
               className={cn(
@@ -2086,7 +2318,7 @@ export default function MapClient({ mapState }: MapClientProps) {
                   : 'grid-cols-1',
               )}
             >
-              <label className="space-y-1 text-[8px] font-medium text-muted-foreground">
+              <label className="space-y-1 text-[9px] font-medium text-muted-foreground">
                 <span>
                   {selectedGeometryKind === 'polygon'
                     ? 'Màu viền'
@@ -2120,7 +2352,7 @@ export default function MapClient({ mapState }: MapClientProps) {
               </label>
 
               {selectedGeometryKind === 'polygon' && (
-                <label className="space-y-1 text-[8px] font-medium text-muted-foreground">
+                <label className="space-y-1 text-[9px] font-medium text-muted-foreground">
                   <span>Màu bên trong</span>
                   <span className="flex h-7 items-center gap-2 rounded-md border border-input bg-background px-1.5">
                     <Input
@@ -2145,7 +2377,7 @@ export default function MapClient({ mapState }: MapClientProps) {
               )}
             </div>
             {featureFormError && (
-              <p className="mt-1 text-[8px] font-medium text-destructive">
+              <p className="mt-1 text-[9px] font-medium text-destructive">
                 {featureFormError}
               </p>
             )}
@@ -2155,7 +2387,7 @@ export default function MapClient({ mapState }: MapClientProps) {
                 size="xs"
                 variant="outline"
                 onClick={deselectEditableFeature}
-                className="h-7 gap-1 px-2 text-[9px] shadow-none"
+                className="h-7 gap-1 px-2 text-[10px] shadow-none"
               >
                 <X className="size-3" />
                 Bỏ chọn
@@ -2164,7 +2396,7 @@ export default function MapClient({ mapState }: MapClientProps) {
                 type="button"
                 size="xs"
                 onClick={saveSelectedFeature}
-                className="h-7 gap-1 px-2 text-[9px] shadow-none"
+                className="h-7 gap-1 px-2 text-[10px] shadow-none"
               >
                 <Save className="size-3" />
                 Lưu đối tượng
