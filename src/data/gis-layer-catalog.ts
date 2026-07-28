@@ -1,4 +1,5 @@
 import type { GisLayerGroup } from '@/types/map';
+import type { MapMarkerIconName } from '@/lib/map-style-config';
 import { MOCK_VILLAGE_BOUNDARIES } from './mock-laobao-boundary';
 import { MOCK_DISASTER_RISK_ZONES } from './mock-map-disaster-risks';
 import { MOCK_PUBLIC_FACILITIES } from './mock-map-public-facilities';
@@ -20,6 +21,7 @@ export interface MapLayer {
     weight?: number;
     radius?: number;
     icon?: string;
+    markerIcon?: MapMarkerIconName;
   };
   securityLevel: 'public' | 'confidential';
   allowedRoles: string[];
@@ -46,6 +48,7 @@ interface LayerOptions {
   weight?: number;
   radius?: number;
   icon?: string;
+  markerIcon?: MapMarkerIconName;
   securityLevel?: MapLayer['securityLevel'];
   source?: string;
   updateFrequency?: string;
@@ -76,6 +79,7 @@ function defineLayer(
       weight: options.weight,
       radius: options.radius ?? (geometryType === 'point' ? 7 : undefined),
       icon: options.icon,
+      markerIcon: options.markerIcon,
     },
     securityLevel,
     allowedRoles:
@@ -187,6 +191,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#ea580c',
       icon: 'Building',
+      markerIcon: 'market',
       source: 'UBND xã Lao Bảo',
       featureCount: countFacilityType('market'),
     },
@@ -218,6 +223,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#8b5cf6',
       icon: 'MapPin',
+      markerIcon: 'attraction',
       source: 'Phòng Văn hóa - Thông tin',
       featureCount: countTourismType('tourist_attraction'),
     },
@@ -230,6 +236,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#d97706',
       icon: 'Landmark',
+      markerIcon: 'landmark',
       source: 'Phòng Văn hóa - Thông tin',
       featureCount: countTourismType('historical_site'),
     },
@@ -242,6 +249,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#10b981',
       icon: 'MapPin',
+      markerIcon: 'mountain',
       source: 'Phòng Văn hóa - Thông tin',
       featureCount: countTourismType('scenic_spot'),
     },
@@ -254,6 +262,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#ec4899',
       icon: 'MapPin',
+      markerIcon: 'camera',
       source: 'Phòng Văn hóa - Thông tin',
       featureCount: countTourismType('check_in'),
     },
@@ -278,6 +287,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#475569',
       icon: 'Building',
+      markerIcon: 'infrastructure',
       source: 'UBND xã Lao Bảo',
       featureCount: countFacilityType('public_infrastructure'),
     },
@@ -290,6 +300,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#6366f1',
       icon: 'Building',
+      markerIcon: 'building',
       source: 'UBND xã Lao Bảo',
       featureCount: countFacilityType('administrative_office'),
     },
@@ -351,6 +362,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#0891b2',
       icon: 'MapPin',
+      markerIcon: 'water',
       source: 'UBND xã Lao Bảo',
       featureCount: countFacilityType('water_facility'),
     },
@@ -366,6 +378,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
   defineLayer('layer-schools', 'Trường học', 'education_health', 'point', {
     color: '#f59e0b',
     icon: 'GraduationCap',
+    markerIcon: 'school',
     source: 'Phòng Giáo dục - Đào tạo',
     featureCount: countFacilityType('school'),
   }),
@@ -377,6 +390,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#10b981',
       icon: 'HeartPulse',
+      markerIcon: 'medical',
       source: 'Trạm Y tế xã Lao Bảo',
       featureCount: countFacilityType('health_station'),
     },
@@ -389,6 +403,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#3b82f6',
       icon: 'Landmark',
+      markerIcon: 'landmark',
       source: 'UBND xã Lao Bảo',
       featureCount: countFacilityType('cultural_house'),
     },

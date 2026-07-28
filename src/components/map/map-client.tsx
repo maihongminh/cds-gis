@@ -380,27 +380,57 @@ function planningComparisonStyle(feature: FeatureLike) {
 
 const savedEditableStyleCache = new globalThis.Map<string, Style>();
 
-function editableFeatureStyle(feature: FeatureLike) {
-  if (feature.get('status') !== 'saved') return draftEditableStyle;
+const catalogMarkerIconFallbacks: Record<string, MapMarkerIconName> = {
+  AlertTriangle: 'warning',
+  BriefcaseBusiness: 'building',
+  Building: 'building',
+  Compass: 'attraction',
+  Construction: 'infrastructure',
+  GraduationCap: 'school',
+  HeartHandshake: 'building',
+  HeartPulse: 'medical',
+  Landmark: 'landmark',
+  Leaf: 'water',
+  Map: 'landmark',
+  MapPin: 'attraction',
+  Shield: 'warning',
+};
 
+function editableFeatureStyle(feature: FeatureLike) {
+  const status = String(feature.get('status') ?? 'draft');
+  const layerId = String(
+    feature.get('previewLayerId') || feature.get('layerId') || '',
+  );
+  const layerConfig = MAP_LAYER_BY_ID.get(layerId);
+  if (status !== 'saved' && !layerConfig) return draftEditableStyle;
+
+  const color = layerConfig?.styleConfig.color ?? '#0f766e';
+  const fillColor = layerConfig?.styleConfig.fillColor ?? color;
+  const markerIcon =
+    layerConfig?.styleConfig.markerIcon ??
+    catalogMarkerIconFallbacks[layerConfig?.styleConfig.icon ?? ''] ??
+    'building';
   const geometryType = feature.getGeometry()?.getType() ?? '';
   const name = String(feature.get('name') ?? 'Đối tượng');
-  const cacheKey = `${geometryType}:${name}`;
+  const cacheKey = `${status}:${geometryType}:${layerId}:${name}:${color}:${markerIcon}`;
   const cachedStyle = savedEditableStyleCache.get(cacheKey);
   if (cachedStyle) return cachedStyle;
 
   const style = new Style({
-    stroke: new Stroke({ color: '#0f766e', width: 3 }),
-    fill: new Fill({ color: 'rgba(20, 184, 166, 0.2)' }),
-    image: new CircleStyle({
-      radius: 7,
-      fill: new Fill({ color: '#0f766e' }),
-      stroke: new Stroke({ color: '#ffffff', width: 2 }),
+    stroke: new Stroke({
+      color,
+      width: layerConfig?.styleConfig.weight ?? 3,
+      lineDash: status === 'saved' ? undefined : [7, 4],
     }),
+    fill: new Fill({ color: `${fillColor}33` }),
+    image:
+      geometryType === 'Point'
+        ? markerImage(color, markerIcon, 30)
+        : undefined,
     text: new Text({
       text: name,
       placement: geometryType === 'LineString' ? 'line' : 'point',
-      offsetY: geometryType === 'Point' ? -18 : 0,
+      offsetY: geometryType === 'Point' ? -48 : 0,
       font: '600 10px var(--font-be-vietnam-pro), sans-serif',
       fill: new Fill({ color: '#0f172a' }),
       stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
@@ -646,7 +676,12 @@ export default function MapClient({ mapState }: MapClientProps) {
     );
     setSelectedFeatureName(String(feature.get('name') ?? ''));
     setSelectedFeatureLayerId(
-      String(feature.get('layerId') ?? feature.get('category') ?? ''),
+      String(
+        feature.get('previewLayerId') ||
+          feature.get('layerId') ||
+          feature.get('category') ||
+          '',
+      ),
     );
     setSelectedFeatureDescription(String(feature.get('description') ?? ''));
     setFeatureFormError(null);
@@ -1061,13 +1096,20 @@ export default function MapClient({ mapState }: MapClientProps) {
 
     const selection = new Select({
       layers: [editableLayer],
-      style: selectedEditableStyle,
+      style: (feature) => [
+        selectedEditableStyle,
+        editableFeatureStyle(feature),
+      ],
       hitTolerance: 8,
     });
     selectInteractionRef.current = selection;
     map.addInteraction(selection);
 
     const selectionKey = selection.on('select', (event) => {
+      event.deselected.forEach((feature) => {
+        feature.unset('previewLayerId', true);
+        feature.changed();
+      });
       const feature = event.selected[0];
       if (!feature) {
         clearSelectedFeatureState();
@@ -1650,6 +1692,7 @@ export default function MapClient({ mapState }: MapClientProps) {
       updatedAt: now,
       savedAt: feature.get('savedAt') ?? now,
     });
+    feature.unset('previewLayerId', true);
     feature.changed();
     editableSourceRef.current.changed();
     setSelectedFeatureStatus('saved');
@@ -1662,7 +1705,11 @@ export default function MapClient({ mapState }: MapClientProps) {
   }
 
   function deselectEditableFeature() {
-    selectInteractionRef.current?.getFeatures().clear();
+    const selection = selectInteractionRef.current?.getFeatures();
+    const feature = selection?.item(0);
+    feature?.unset('previewLayerId', true);
+    feature?.changed();
+    selection?.clear();
     clearSelectedFeatureState();
     if (editorMode === 'modify') setEditorMode('view');
   }
@@ -1924,6 +1971,12 @@ export default function MapClient({ mapState }: MapClientProps) {
                 onValueChange={(value) => {
                   setSelectedFeatureLayerId(value);
                   setFeatureFormError(null);
+                  const feature =
+                    selectInteractionRef.current?.getFeatures().item(0);
+                  if (feature) {
+                    feature.set('previewLayerId', value);
+                    feature.changed();
+                  }
                 }}
               >
                 <SelectTrigger
@@ -1933,7 +1986,7 @@ export default function MapClient({ mapState }: MapClientProps) {
                 >
                   <SelectValue placeholder="Chọn nhóm / loại *" />
                 </SelectTrigger>
-                <SelectContent className="max-h-80 text-xs">
+                <SelectContent className="z-[1100] max-h-80 text-xs">
                   {editableCatalogGroups.map((group) => (
                     <SelectGroup key={group.id}>
                       <SelectLabel className="text-[9px] font-bold uppercase text-primary">
