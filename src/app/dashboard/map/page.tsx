@@ -12,10 +12,7 @@ import { MapLegend } from './components/map-legend';
 import { DisasterAlertPanel } from './components/disaster-alert-panel';
 import { INITIAL_MAP_LAYERS, GIS_LAYER_GROUPS } from '@/data/mock-map-layers';
 import { useTenant } from '@/components/layout/tenant-context';
-import type {
-  LocationSearchMarker,
-  MapState,
-} from '@/components/map/map-client';
+import type { MapState } from '@/components/map/map-client';
 import { DEFAULT_BASE_LAYER_ID, LAOBAO_CENTER } from '@/lib/map-config';
 
 /** Commune center for "fit all" button */
@@ -63,9 +60,6 @@ export default function MapPage() {
     [number, number, number?] | null
   >(null);
   const [activeBaseLayerId, setActiveBaseLayerId] = React.useState(DEFAULT_BASE_LAYER_ID);
-  const [locationSearchMarker, setLocationSearchMarker] =
-    React.useState<LocationSearchMarker | null>(null);
-
   // ── UI state ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isLayerPanelOpen, setIsLayerPanelOpen] = React.useState(false);
@@ -94,8 +88,6 @@ export default function MapPage() {
       setSelectedVillageCode,
       searchQuery,
       setSearchQuery,
-      locationSearchMarker,
-      setLocationSearchMarker,
       flyToCoords,
       setFlyToCoords,
       activeBaseLayerId,
@@ -110,7 +102,6 @@ export default function MapPage() {
       resetToDefaults,
       selectedVillageCode,
       searchQuery,
-      locationSearchMarker,
       flyToCoords,
       activeBaseLayerId,
       currentRole,
