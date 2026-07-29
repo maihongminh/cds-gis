@@ -1,20 +1,23 @@
 'use client';
 
 import * as React from 'react';
-import { Menu, Search, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
+import { Menu, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+
 import { useSidebar } from './sidebar-context';
 import { TenantSwitcher } from './tenant-switcher';
 import { NotificationsMenu } from './notifications-menu';
 import { ThemeToggle } from '../theme/theme-toggle';
 import { UserMenu } from './user-menu';
 import { Button } from '@/components/ui';
-import { Input } from '@/components/ui';
 import { APP_CONFIG } from '@/lib/app-config';
-import Link from 'next/link';
 import { SearchInput } from '../common/search-input';
 
 export function DashboardHeader() {
   const { isCollapsed, toggleSidebar, setMobileOpen } = useSidebar();
+  const pathname = usePathname();
+  const isMapWorkspace = pathname === '/dashboard/map';
 
   return (
     <header className="sticky top-0 z-30 h-16 border-b border-border bg-background/80 backdrop-blur-md px-2.5 md:px-6 xl:px-8 flex items-center justify-between">
@@ -55,16 +58,20 @@ export function DashboardHeader() {
         </Button>
 
         {/* Administrative scope filter */}
-        <div className="hidden md:flex">
-          <TenantSwitcher />
-        </div>
+        {!isMapWorkspace && (
+          <div className="hidden md:flex">
+            <TenantSwitcher />
+          </div>
+        )}
       </div>
 
-      <SearchInput
-        placeholder="Tìm kiếm nhanh..."
-        className="hidden xl:flex max-w-xs"
-        inputClassName="h-8"
-      />
+      {!isMapWorkspace && (
+        <SearchInput
+          placeholder="Tìm kiếm nhanh..."
+          className="hidden xl:flex max-w-xs"
+          inputClassName="h-8"
+        />
+      )}
 
       {/* Right group: Notifications, Theme, User Menu */}
       <div className="flex items-center gap-2.5">

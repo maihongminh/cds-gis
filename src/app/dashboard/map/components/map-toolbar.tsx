@@ -1,5 +1,5 @@
 // src/app/dashboard/map/components/map-toolbar.tsx
-// Floating toolbar above the map: village selector, full-commune fit, base layer switcher,
+// Floating toolbar above the map: village selector, nationwide fit, base layer switcher,
 // layer panel toggle, search trigger.
 'use client';
 
@@ -16,7 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui';
-import { Home, Layers, Map as MapIcon, MapPinned } from 'lucide-react';
+import { Layers, Map as MapIcon, MapPinned } from 'lucide-react';
 import { VILLAGES, COMMUNE } from '@/data/laobao-administrative-units';
 import { BASE_LAYERS, VIETNAM_CENTER } from '@/lib/map-config';
 import type { MapState } from '@/components/map/map-client';
@@ -27,7 +27,7 @@ interface MapToolbarProps {
   mapState: MapState;
   onToggleLayerPanel: () => void;
   isLayerPanelOpen: boolean;
-  /** Called when user selects "Toàn xã" — parent flyTo commune center */
+  /** Called when the village selector returns to the full commune. */
   onFitCommune: () => void;
   className?: string;
 }
@@ -69,23 +69,6 @@ export function MapToolbar({
           className
         )}
       >
-        {/* Fit commune */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onFitCommune}
-              className="h-8 px-2.5 gap-1.5 text-xs border-border shadow-none cursor-pointer"
-              aria-label="Toàn xã Lao Bảo"
-            >
-              <Home className="size-3.5 text-primary" />
-              <span className="hidden sm:inline font-medium">Toàn xã</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Về toàn xã Lao Bảo</TooltipContent>
-        </Tooltip>
-
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -110,7 +93,7 @@ export function MapToolbar({
           >
             <SelectValue placeholder="Chọn thôn..." />
           </SelectTrigger>
-          <SelectContent className="border-border bg-card text-xs">
+          <SelectContent className="z-[1200] border-border bg-card text-xs">
             <SelectItem value="all" className="cursor-pointer font-medium text-primary">
               📍 Toàn {COMMUNE.name}
             </SelectItem>
@@ -136,7 +119,10 @@ export function MapToolbar({
             <MapIcon className="size-3.5 shrink-0 text-primary" />
             <SelectValue placeholder="Chọn bản đồ nền" />
           </SelectTrigger>
-          <SelectContent align="end" className="border-border bg-card text-xs">
+          <SelectContent
+            align="end"
+            className="z-[1200] border-border bg-card text-xs"
+          >
             {BASE_LAYERS.map((layer) => (
               <SelectItem
                 key={layer.id}

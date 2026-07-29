@@ -4,8 +4,21 @@
 'use client';
 
 import * as React from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { LockKeyhole, ShieldAlert } from 'lucide-react';
+import { toast } from 'sonner';
+
 import { MapShell } from '@/components/map/map-shell';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Label,
+} from '@/components/ui';
 import { MapToolbar } from './components/map-toolbar';
 import { MapLayerPanel } from './components/map-layer-panel';
 import { MapLegend } from './components/map-legend';
@@ -17,6 +30,17 @@ import { DEFAULT_BASE_LAYER_ID, LAOBAO_CENTER } from '@/lib/map-config';
 
 /** Commune center for "fit all" button */
 const COMMUNE_CENTER: [number, number] = [LAOBAO_CENTER.lat, LAOBAO_CENTER.lng];
+const SECURITY_GROUP_ID = 'security_defense';
+const DEMO_SECURITY_PASSWORD = 'Daylamatkhau';
+const SECURITY_LAYER_IDS = new Set(
+  INITIAL_MAP_LAYERS.filter(
+    (layer) => layer.dataGroup === SECURITY_GROUP_ID,
+  ).map((layer) => layer.id),
+);
+
+type PendingSecurityAction =
+  | { type: 'toggle-layer'; layerId: string }
+  | { type: 'enable-group'; groupId: string };
 
 export default function MapPage() {
   const { currentRole } = useTenant();
@@ -27,14 +51,22 @@ export default function MapPage() {
     .map((l) => l.id);
 
   const [activeLayerIds, setActiveLayerIds] = React.useState<string[]>(defaultActiveIds);
+  const [isSecurityUnlocked, setIsSecurityUnlocked] = React.useState(false);
+  const [isSecurityDialogOpen, setIsSecurityDialogOpen] =
+    React.useState(false);
+  const [securityPassword, setSecurityPassword] = React.useState('');
+  const [securityPasswordError, setSecurityPasswordError] =
+    React.useState<string | null>(null);
+  const [pendingSecurityAction, setPendingSecurityAction] =
+    React.useState<PendingSecurityAction | null>(null);
 
-  const toggleLayer = React.useCallback((id: string) => {
+  const toggleLayerDirectly = React.useCallback((id: string) => {
     setActiveLayerIds((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
     );
   }, []);
 
-  const enableAllInGroup = React.useCallback((groupId: string) => {
+  const enableAllInGroupDirectly = React.useCallback((groupId: string) => {
     const group = GIS_LAYER_GROUPS.find((g) => g.id === groupId);
     if (!group) return;
     setActiveLayerIds((prev) => {
@@ -44,15 +76,111 @@ export default function MapPage() {
     });
   }, []);
 
+  const requestSecurityPassword = React.useCallback(
+    (action: PendingSecurityAction) => {
+      setPendingSecurityAction(action);
+      setSecurityPassword('');
+      setSecurityPasswordError(null);
+      setIsSecurityDialogOpen(true);
+    },
+    [],
+  );
+
+  const toggleLayer = React.useCallback(
+    (id: string) => {
+      const isProtectedLayer = SECURITY_LAYER_IDS.has(id);
+      const isActive = activeLayerIds.includes(id);
+      if (isProtectedLayer && !isActive && !isSecurityUnlocked) {
+        requestSecurityPassword({ type: 'toggle-layer', layerId: id });
+        return;
+      }
+
+      toggleLayerDirectly(id);
+      if (
+        isProtectedLayer &&
+        isActive &&
+        !activeLayerIds.some(
+          (layerId) => layerId !== id && SECURITY_LAYER_IDS.has(layerId),
+        )
+      ) {
+        setIsSecurityUnlocked(false);
+      }
+    },
+    [
+      activeLayerIds,
+      isSecurityUnlocked,
+      requestSecurityPassword,
+      toggleLayerDirectly,
+    ],
+  );
+
+  const enableAllInGroup = React.useCallback(
+    (groupId: string) => {
+      const group = GIS_LAYER_GROUPS.find((item) => item.id === groupId);
+      if (!group) return;
+      const hasInactiveLayer = group.layers.some(
+        (layerId) => !activeLayerIds.includes(layerId),
+      );
+      if (
+        groupId === SECURITY_GROUP_ID &&
+        hasInactiveLayer &&
+        !isSecurityUnlocked
+      ) {
+        requestSecurityPassword({ type: 'enable-group', groupId });
+        return;
+      }
+      enableAllInGroupDirectly(groupId);
+    },
+    [
+      activeLayerIds,
+      enableAllInGroupDirectly,
+      isSecurityUnlocked,
+      requestSecurityPassword,
+    ],
+  );
+
   const disableAllInGroup = React.useCallback((groupId: string) => {
     const group = GIS_LAYER_GROUPS.find((g) => g.id === groupId);
     if (!group) return;
     setActiveLayerIds((prev) => prev.filter((id) => !group.layers.includes(id)));
+    if (groupId === SECURITY_GROUP_ID) setIsSecurityUnlocked(false);
   }, []);
 
   const resetToDefaults = React.useCallback(() => {
     setActiveLayerIds(defaultActiveIds);
+    setIsSecurityUnlocked(false);
   }, [defaultActiveIds]);
+
+  function closeSecurityDialog() {
+    setIsSecurityDialogOpen(false);
+    setPendingSecurityAction(null);
+    setSecurityPassword('');
+    setSecurityPasswordError(null);
+  }
+
+  function handleSecurityPasswordSubmit(
+    event: React.FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    if (securityPassword !== DEMO_SECURITY_PASSWORD) {
+      setSecurityPasswordError('Mật khẩu không đúng. Vui lòng thử lại.');
+      return;
+    }
+
+    const action = pendingSecurityAction;
+    setIsSecurityUnlocked(true);
+    setIsSecurityDialogOpen(false);
+    setPendingSecurityAction(null);
+    setSecurityPassword('');
+    setSecurityPasswordError(null);
+
+    if (action?.type === 'toggle-layer') {
+      toggleLayerDirectly(action.layerId);
+    } else if (action?.type === 'enable-group') {
+      enableAllInGroupDirectly(action.groupId);
+    }
+    toast.success('Đã mở khóa lớp Quốc phòng - An ninh.');
+  }
 
   // ── Map navigation state ───────────────────────────────────────────────────
   const [selectedVillageCode, setSelectedVillageCode] = React.useState<string | null>(null);
@@ -157,6 +285,89 @@ export default function MapPage() {
         onClose={() => setIsLayerPanelOpen(false)}
         isMobile={isMobile}
       />
+
+      <Dialog
+        open={isSecurityDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeSecurityDialog();
+        }}
+      >
+        <DialogContent
+          className="z-[1501] gap-4 border-border bg-card sm:max-w-sm"
+          overlayClassName="z-[1500] bg-black/65"
+        >
+          <DialogHeader>
+            <div className="mb-1 flex size-9 items-center justify-center rounded-full bg-red-500/10 text-red-600 dark:text-red-400">
+              <LockKeyhole className="size-4.5" />
+            </div>
+            <DialogTitle className="text-sm">
+              Mở khóa lớp Quốc phòng - An ninh
+            </DialogTitle>
+            <DialogDescription className="text-xs leading-5">
+              Nhập mật khẩu để hiển thị dữ liệu thuộc nhóm bảo vệ. Đây là cơ
+              chế demo và sẽ được thay bằng phân quyền hệ thống sau này.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={handleSecurityPasswordSubmit}
+            className="space-y-4"
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="security-layer-password" className="text-xs">
+                Mật khẩu
+              </Label>
+              <Input
+                id="security-layer-password"
+                type="password"
+                value={securityPassword}
+                onChange={(event) => {
+                  setSecurityPassword(event.target.value);
+                  setSecurityPasswordError(null);
+                }}
+                autoFocus
+                autoComplete="current-password"
+                placeholder="Nhập mật khẩu..."
+                className="h-9 text-xs"
+                aria-invalid={Boolean(securityPasswordError)}
+                aria-describedby={
+                  securityPasswordError
+                    ? 'security-layer-password-error'
+                    : 'security-layer-password-hint'
+                }
+              />
+              {securityPasswordError ? (
+                <p
+                  id="security-layer-password-error"
+                  className="text-[10px] font-medium text-destructive"
+                >
+                  {securityPasswordError}
+                </p>
+              ) : (
+                <p
+                  id="security-layer-password-hint"
+                  className="text-[10px] text-muted-foreground"
+                >
+                  Mật khẩu demo: <code>Daylamatkhau</code>
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={closeSecurityDialog}
+                className="h-8 text-xs"
+              >
+                Hủy
+              </Button>
+              <Button type="submit" size="sm" className="h-8 text-xs">
+                Mở khóa
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Legend — bottom left ── */}
       <div className="absolute bottom-8 right-12 z-1000 w-42">
