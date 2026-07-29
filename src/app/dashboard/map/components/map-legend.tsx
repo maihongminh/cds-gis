@@ -2,27 +2,14 @@
 'use client';
 
 import * as React from 'react';
-import {
-  Building,
-  Eye,
-  GraduationCap,
-  HeartPulse,
-  Landmark,
-  MapPin,
-} from 'lucide-react';
+import { Eye } from 'lucide-react';
 import {
   GIS_LAYER_GROUPS,
   MAP_LAYER_BY_ID,
 } from '@/data/mock-map-layers';
+import type { MapLayer } from '@/data/gis-layer-catalog';
 import { cn } from '@/lib/utils';
-
-const LAYER_ICONS: Record<string, React.ElementType> = {
-  Building,
-  GraduationCap,
-  HeartPulse,
-  Landmark,
-  MapPin,
-};
+import { MapLayerSymbol } from './map-layer-symbol';
 
 interface MapLegendProps {
   activeLayerIds: string[];
@@ -35,39 +22,19 @@ function LegendRow({
   color,
   label,
   geometryType = 'point',
-  icon,
+  styleConfig,
 }: {
   color: string;
   label: string;
   geometryType?: 'point' | 'line' | 'polygon';
-  icon?: React.ElementType;
+  styleConfig?: MapLayer['styleConfig'];
 }) {
   return (
     <div className="flex items-center gap-2 text-[10px]">
-      {icon ? (
-        <div
-          style={{ color }}
-          className="flex size-3 shrink-0 items-center justify-center"
-        >
-          {React.createElement(icon, { className: 'size-3' })}
-        </div>
-      ) : geometryType === 'point' ? (
-        <span
-          className="size-3 shrink-0 rounded-full border-[1.5px] border-white"
-          style={{ background: color }}
-        />
-      ) : (
-        <span
-          className={cn(
-            'size-3 shrink-0 border',
-            geometryType === 'line' ? 'h-0 border-x-0 border-b-0' : 'rounded-sm',
-          )}
-          style={{
-            background: geometryType === 'polygon' ? `${color}30` : undefined,
-            borderColor: color,
-          }}
-        />
-      )}
+      <MapLayerSymbol
+        geometryType={geometryType}
+        styleConfig={styleConfig ?? { color }}
+      />
       <span className="leading-tight text-foreground/80">{label}</span>
     </div>
   );
@@ -137,11 +104,7 @@ export function MapLegend({
                     color={layer.styleConfig.color}
                     label={layer.shortLabel ?? layer.name}
                     geometryType={layer.geometryType}
-                    icon={
-                      layer.styleConfig.icon
-                        ? LAYER_ICONS[layer.styleConfig.icon]
-                        : undefined
-                    }
+                    styleConfig={layer.styleConfig}
                   />
                 ),
               )}
@@ -149,7 +112,7 @@ export function MapLegend({
                 <LegendRow
                   color="#dc2626"
                   label="Hoàng Sa, Trường Sa (Việt Nam)"
-                  icon={MapPin}
+                  styleConfig={{ color: '#dc2626', icon: 'MapPin' }}
                 />
               )}
             </div>

@@ -16,25 +16,22 @@ import { INITIAL_MAP_LAYERS, GIS_LAYER_GROUPS } from '@/data/mock-map-layers';
 import {
   AlertTriangle,
   BriefcaseBusiness,
-  Building,
   Compass,
   Construction,
   Eye,
   EyeOff,
   GraduationCap,
   HeartHandshake,
-  HeartPulse,
-  Landmark,
   Layers,
   Leaf,
   Map,
-  MapPin,
   RotateCcw,
   Shield,
   ChevronRight,
 } from 'lucide-react';
 import type { MapState } from '@/components/map/map-client';
 import { cn } from '@/lib/utils';
+import { MapLayerSymbol } from './map-layer-symbol';
 
 // Icon map for group icons
 const GROUP_ICONS = {
@@ -48,15 +45,6 @@ const GROUP_ICONS = {
   Shield,
   AlertTriangle,
 } as const;
-
-// Icon map for specific layer icons
-const LAYER_ICONS: Record<string, React.ElementType> = {
-  MapPin,
-  HeartPulse,
-  GraduationCap,
-  Landmark,
-  Building,
-};
 
 interface MapLayerPanelProps {
   mapState: MapState;
@@ -192,16 +180,10 @@ function LayerPanelContent({ mapState }: { mapState: MapState }) {
                     className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors group"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      {layer.styleConfig.icon && LAYER_ICONS[layer.styleConfig.icon] ? (
-                        <div style={{ color: layer.styleConfig.color }} className="flex items-center justify-center size-3">
-                          {React.createElement(LAYER_ICONS[layer.styleConfig.icon], { className: "size-3 shrink-0" })}
-                        </div>
-                      ) : (
-                        <span
-                          className="size-2.5 rounded-full shrink-0"
-                          style={{ background: layer.styleConfig.color }}
-                        />
-                      )}
+                      <MapLayerSymbol
+                        geometryType={layer.geometryType}
+                        styleConfig={layer.styleConfig}
+                      />
                       <span className="text-[11px] text-foreground truncate">{layer.shortLabel ?? layer.name}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -256,7 +238,7 @@ export function MapLayerPanel({ mapState, isOpen, onClose, isMobile }: MapLayerP
   if (!isOpen) return null;
 
   return (
-    <div className="absolute top-17 bottom-76 left-2.5 z-1000 flex w-76 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-sm">
+    <div className="absolute top-17 bottom-76 left-2.5 z-1000 flex w-80 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-sm">
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <h3 className="font-bold text-xs text-foreground flex items-center gap-1.5">
           <Layers className="size-3.5 text-primary" />
