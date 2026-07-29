@@ -49,3 +49,6 @@ cloudflare-env.d.ts
 .wrangler/
 
 .history
+
+# Shared GIS demo runtime data (generated from source seed)
+/data/runtime/

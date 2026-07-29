@@ -87,7 +87,7 @@ function defineLayer(
     source: options.source ?? 'Chưa kết nối dữ liệu',
     updateFrequency: options.updateFrequency ?? 'Theo nguồn dữ liệu',
     status: 'active',
-    featureCount: options.featureCount ?? 0,
+    featureCount: Math.max(options.featureCount ?? 1, 1),
   };
 }
 

@@ -58,29 +58,24 @@ import {
   SelectValue,
   Textarea,
 } from '@/components/ui';
-import { MOCK_LAOBAO_COMMUNE_BOUNDARY } from '@/data/mock-laobao-commune-boundary';
-import { MOCK_VILLAGE_BOUNDARIES } from '@/data/mock-laobao-boundary';
-import { MOCK_DISASTER_RISK_ZONES } from '@/data/mock-map-disaster-risks';
 import {
   GIS_LAYER_GROUPS,
   INITIAL_MAP_LAYERS,
   MAP_LAYER_BY_ID,
 } from '@/data/mock-map-layers';
-import { MOCK_PUBLIC_FACILITIES } from '@/data/mock-map-public-facilities';
-import { MOCK_TOURISM_POIS } from '@/data/mock-map-tourism-pois';
 import {
-  MOCK_CURRENT_STATE,
-  MOCK_PLANNED_STATE,
-} from '@/data/mock-map-scenarios';
+  deleteDemoGisFeature as deletePersistedDemoGisFeature,
+  deleteUserDemoGisFeatures,
+  fetchDemoGisFeatures,
+  saveDemoGisFeature as persistDemoGisFeature,
+} from '@/lib/demo-gis-api';
 import { BASE_LAYERS, LAOBAO_CENTER } from '@/lib/map-config';
 import {
   buildIconPinMarkerSvg,
-  FACILITY_COLORS,
-  TOURISM_POI_COLORS,
   type MapMarkerIconName,
 } from '@/lib/map-style-config';
 import { cn } from '@/lib/utils';
-import type { PublicFacilityType, TourismPoiType } from '@/types/map';
+import type { DemoGisFeature } from '@/types/demo-gis';
 
 export interface MapState {
   activeLayerIds: string[];
@@ -110,6 +105,7 @@ interface SavedObjectPopup {
   description: string;
   geometryKind: EditableGeometryKind;
   layerId: string;
+  details: Record<string, string | number | boolean | null>;
 }
 
 const geoJsonFormat = new GeoJSON();
@@ -119,19 +115,6 @@ function readGeoJsonFeatures(data: object) {
     dataProjection: 'EPSG:4326',
     featureProjection: 'EPSG:3857',
   });
-}
-
-function createPointFeature(
-  id: string,
-  coordinates: [number, number],
-  properties: Record<string, unknown>,
-) {
-  const feature = new Feature({
-    geometry: new Point(fromLonLat(coordinates)),
-    ...properties,
-  });
-  feature.setId(id);
-  return feature;
 }
 
 const markerImageCache = new globalThis.Map<string, IconStyle>();
@@ -161,41 +144,6 @@ function markerStyle(color: string, icon: MapMarkerIconName, size = 30) {
   const style = new Style({ image: markerImage(color, icon, size) });
   markerStyleCache.set(cacheKey, style);
   return style;
-}
-
-const tourismMarkerIcons: Record<TourismPoiType, MapMarkerIconName> = {
-  tourist_attraction: 'attraction',
-  historical_site: 'landmark',
-  scenic_spot: 'mountain',
-  check_in: 'camera',
-  local_product_point: 'market',
-};
-
-function tourismMarkerStyle(feature: FeatureLike) {
-  const tourismType = feature.get('tourismType') as TourismPoiType;
-  return markerStyle(
-    TOURISM_POI_COLORS[tourismType] ?? '#8b5cf6',
-    tourismMarkerIcons[tourismType] ?? 'attraction',
-  );
-}
-
-const facilityMarkerIcons: Record<PublicFacilityType, MapMarkerIconName> = {
-  health_station: 'medical',
-  school: 'school',
-  cultural_house: 'landmark',
-  administrative_office: 'building',
-  market: 'market',
-  sports_facility: 'sports',
-  water_facility: 'water',
-  public_infrastructure: 'infrastructure',
-};
-
-function facilityMarkerStyle(feature: FeatureLike) {
-  const facilityType = feature.get('facilityType') as PublicFacilityType;
-  return markerStyle(
-    FACILITY_COLORS[facilityType] ?? '#64748b',
-    facilityMarkerIcons[facilityType] ?? 'building',
-  );
 }
 
 const communeStyle = new Style({
@@ -369,7 +317,7 @@ const catalogMarkerIconFallbacks: Record<string, MapMarkerIconName> = {
   Shield: 'warning',
 };
 
-function editableFeatureStyle(feature: FeatureLike) {
+function editableFeatureStyle(feature: FeatureLike, resolution = 0) {
   const status = String(feature.get('status') ?? 'draft');
   const layerId = String(
     feature.get('previewLayerId') || feature.get('layerId') || '',
@@ -394,7 +342,8 @@ function editableFeatureStyle(feature: FeatureLike) {
     catalogMarkerIconFallbacks[layerConfig?.styleConfig.icon ?? ''];
   const geometryType = feature.getGeometry()?.getType() ?? '';
   const name = String(feature.get('name') ?? 'Đối tượng');
-  const cacheKey = `${status}:${geometryType}:${layerId}:${name}:${color}:${fillColor}:${markerIcon ?? 'circle'}`;
+  const showName = status !== 'saved' || resolution <= 20;
+  const cacheKey = `${status}:${geometryType}:${layerId}:${name}:${color}:${fillColor}:${markerIcon ?? 'circle'}:${showName ? 'label' : 'symbol'}`;
   const cachedStyle = savedEditableStyleCache.get(cacheKey);
   if (cachedStyle) return cachedStyle;
 
@@ -415,19 +364,21 @@ function editableFeatureStyle(feature: FeatureLike) {
               stroke: new Stroke({ color: '#ffffff', width: 2 }),
             })
         : undefined,
-    text: new Text({
-      text: name,
-      placement: geometryType === 'LineString' ? 'line' : 'point',
-      offsetY:
-        geometryType === 'Point'
-          ? markerIcon
-            ? -48
-            : -18
-          : 0,
-      font: '600 10px var(--font-be-vietnam-pro), sans-serif',
-      fill: new Fill({ color: '#0f172a' }),
-      stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
-    }),
+    text: showName
+      ? new Text({
+          text: name,
+          placement: geometryType === 'LineString' ? 'line' : 'point',
+          offsetY:
+            geometryType === 'Point'
+              ? markerIcon
+                ? -48
+                : -18
+              : 0,
+          font: '600 10px var(--font-be-vietnam-pro), sans-serif',
+          fill: new Fill({ color: '#0f172a' }),
+          stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
+        })
+      : undefined,
   });
   savedEditableStyleCache.set(cacheKey, style);
   return style;
@@ -471,29 +422,30 @@ function riskStyle(feature: FeatureLike) {
   return style;
 }
 
-function createDisasterFeatures(riskTypes: string[]) {
-  return MOCK_DISASTER_RISK_ZONES.filter((zone) =>
-    riskTypes.includes(zone.riskType),
-  ).map((zone) => {
-    const geometry =
-      zone.geometry.type === 'Point'
-        ? new Point(fromLonLat(zone.geometry.coordinates as [number, number]))
-        : new Polygon(
-            (zone.geometry.coordinates as [number, number][][]).map((ring) =>
-              ring.map((coordinate) => fromLonLat(coordinate)),
-            ),
-          );
-    const feature = new Feature({
-      geometry,
-      id: zone.id,
-      name: zone.name,
-      riskLevel: zone.riskLevel,
-      riskType: zone.riskType,
-      warningMessage: zone.warningMessage,
-    });
-    feature.setId(zone.id);
-    return feature;
-  });
+function demoFeatureStyle(
+  feature: FeatureLike,
+  selectedVillageCode: string | null,
+  resolution = 0,
+) {
+  const layerId = String(feature.get('layerId') ?? '');
+  if (layerId === 'layer-commune') return communeStyle;
+  if (layerId === 'layer-villages') {
+    return feature.get('villageCode') === selectedVillageCode
+      ? selectedVillageStyle
+      : villageStyle;
+  }
+  if (layerId === 'layer-village-labels') return villageLabelStyle(feature);
+  if (layerId === 'layer-land-use-planning') {
+    return planningComparisonStyle(feature);
+  }
+  if (
+    layerId === 'layer-landslide-risk' ||
+    layerId === 'layer-flood-risk' ||
+    layerId === 'layer-critical-areas'
+  ) {
+    return riskStyle(feature);
+  }
+  return editableFeatureStyle(feature, resolution);
 }
 
 function editableGeometryKind(feature: Feature): EditableGeometryKind | null {
@@ -626,10 +578,12 @@ export default function MapClient({
   const objectPopupOverlayRef = React.useRef<Overlay | null>(null);
   const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
   const eventKeysRef = React.useRef<EventsKey[]>([]);
+  const hasFitDemoDataRef = React.useRef(false);
 
   const [mapReady, setMapReady] = React.useState(false);
   const [editorMode, setEditorMode] = React.useState<EditorMode>('view');
   const [isDrawing, setIsDrawing] = React.useState(false);
+  const [isPersisting, setIsPersisting] = React.useState(false);
   const [editableFeatureCount, setEditableFeatureCount] = React.useState(0);
   const [savedFeatureCount, setSavedFeatureCount] = React.useState(0);
   const [selectedFeatureId, setSelectedFeatureId] = React.useState<string | null>(null);
@@ -713,7 +667,9 @@ export default function MapClient({
   }, []);
 
   const refreshEditableFeatureStats = React.useCallback(() => {
-    const features = editableSourceRef.current.getFeatures();
+    const features = editableSourceRef.current
+      .getFeatures()
+      .filter((feature) => feature.get('source') === 'user');
     setEditableFeatureCount(features.length);
     setSavedFeatureCount(
       features.filter((feature) => feature.get('status') === 'saved').length,
@@ -742,6 +698,14 @@ export default function MapClient({
         description: String(feature.get('description') ?? ''),
         geometryKind: editableGeometryKind(feature) ?? 'point',
         layerId,
+        details:
+          feature.get('details') &&
+          typeof feature.get('details') === 'object'
+            ? (feature.get('details') as Record<
+                string,
+                string | number | boolean | null
+              >)
+            : {},
       });
       objectPopupOverlayRef.current?.setPosition(coordinate);
     },
@@ -833,37 +797,6 @@ export default function MapClient({
     });
     administrativeBaseLayerRef.current = administrativeBaseLayer;
 
-    const communeSource = new VectorSource({
-      features: readGeoJsonFeatures(MOCK_LAOBAO_COMMUNE_BOUNDARY),
-    });
-    const villageSource = new VectorSource({
-      features: readGeoJsonFeatures(MOCK_VILLAGE_BOUNDARIES),
-    });
-
-    const communeLayer = new VectorLayer({
-      source: communeSource,
-      style: communeStyle,
-      zIndex: 10,
-    });
-    const villageLayer = new VectorLayer({
-      source: villageSource,
-      zIndex: 20,
-      renderBuffer: 64,
-      style: (feature) =>
-        feature.get('villageCode') === mapStateRef.current.selectedVillageCode
-          ? selectedVillageStyle
-          : villageStyle,
-    });
-    villageLayerRef.current = villageLayer;
-
-    const villageLabelLayer = new VectorLayer({
-      source: villageSource,
-      declutter: true,
-      zIndex: 30,
-      renderBuffer: 64,
-      style: villageLabelStyle,
-    });
-
     const sovereigntyLayer = new VectorLayer({
       source: new VectorSource({
         url: '/gis-source/vietnam-islands',
@@ -876,138 +809,9 @@ export default function MapClient({
       zIndex: 90,
     });
 
-    const tourismDefinitions = [
-      {
-        id: 'layer-tourist-attractions',
-        type: 'tourist_attraction',
-      },
-      {
-        id: 'layer-historical-sites',
-        type: 'historical_site',
-      },
-      {
-        id: 'layer-scenic-spots',
-        type: 'scenic_spot',
-      },
-      {
-        id: 'layer-check-ins',
-        type: 'check_in',
-      },
-    ];
-    const tourismLayers = tourismDefinitions.map((definition, index) => ({
-      id: definition.id,
-      layer: new VectorLayer({
-        source: new VectorSource({
-          features: MOCK_TOURISM_POIS.filter(
-            (poi) => poi.type === definition.type,
-          ).map((poi) =>
-            createPointFeature(poi.id, poi.coordinates, {
-              name: poi.name,
-              kind: 'tourism',
-              tourismType: poi.type,
-              villageName: poi.villageName,
-              layerId: definition.id,
-            }),
-          ),
-        }),
-        renderBuffer: 48,
-        style: tourismMarkerStyle,
-        zIndex: 60 + index,
-      }),
-    }));
-
-    const facilityDefinitions = [
-      {
-        id: 'layer-health-facilities',
-        matches: (type: string) => type === 'health_station',
-      },
-      {
-        id: 'layer-schools',
-        matches: (type: string) => type === 'school',
-      },
-      {
-        id: 'layer-cultural-houses',
-        matches: (type: string) => type === 'cultural_house',
-      },
-      {
-        id: 'layer-administrative-offices',
-        matches: (type: string) => type === 'administrative_office',
-      },
-      {
-        id: 'layer-markets',
-        matches: (type: string) => type === 'market',
-      },
-      {
-        id: 'layer-water-supply',
-        matches: (type: string) => type === 'water_facility',
-      },
-      {
-        id: 'layer-technical-infrastructure',
-        matches: (type: string) => type === 'public_infrastructure',
-      },
-    ];
-
-    const facilityLayers = facilityDefinitions.map((definition, index) => ({
-      id: definition.id,
-      layer: new VectorLayer({
-        source: new VectorSource({
-          features: MOCK_PUBLIC_FACILITIES.filter((facility) =>
-            definition.matches(facility.facilityType),
-          ).map((facility) =>
-            createPointFeature(facility.id, facility.coordinates, {
-              name: facility.name,
-              kind: 'facility',
-              facilityType: facility.facilityType,
-              villageName: facility.villageName,
-              layerId: definition.id,
-            }),
-          ),
-        }),
-        renderBuffer: 48,
-        style: facilityMarkerStyle,
-        zIndex: 70 + index,
-      }),
-    }));
-
-    const disasterDefinitions = [
-      { id: 'layer-landslide-risk', riskTypes: ['landslide'] },
-      { id: 'layer-flood-risk', riskTypes: ['flooding'] },
-      {
-        id: 'layer-critical-areas',
-        riskTypes: ['erosion', 'critical_area'],
-      },
-    ];
-    const disasterLayers = disasterDefinitions.map((definition, index) => ({
-      id: definition.id,
-      layer: new VectorLayer({
-        source: new VectorSource({
-          features: createDisasterFeatures(definition.riskTypes).map(
-            (feature) => {
-              feature.set('layerId', definition.id);
-              return feature;
-            },
-          ),
-        }),
-        style: riskStyle,
-        zIndex: 45 + index,
-      }),
-    }));
-    const planningComparisonLayer = new VectorLayer({
-      source: new VectorSource({
-        features: [
-          ...readGeoJsonFeatures(MOCK_CURRENT_STATE),
-          ...readGeoJsonFeatures(MOCK_PLANNED_STATE),
-        ].map((feature) => {
-          feature.set('layerId', 'layer-land-use-planning');
-          return feature;
-        }),
-      }),
-      style: planningComparisonStyle,
-      zIndex: 40,
-    });
     const editableLayer = new VectorLayer({
       source: editableSourceRef.current,
-      style: (feature) => {
+      style: (feature, resolution) => {
         const layerId = String(feature.get('layerId') ?? '');
         const layerConfig = MAP_LAYER_BY_ID.get(layerId);
         const canViewLayer =
@@ -1023,27 +827,18 @@ export default function MapClient({
         ) {
           return undefined;
         }
-        return editableFeatureStyle(feature);
+        return demoFeatureStyle(
+          feature,
+          mapStateRef.current.selectedVillageCode,
+          resolution,
+        );
       },
+      renderBuffer: 64,
       zIndex: 100,
     });
     editableLayerRef.current = editableLayer;
-    const populatedLayers: Array<[string, VectorLayer]> = [
-      ['layer-commune', communeLayer],
-      ['layer-villages', villageLayer],
-      ['layer-village-labels', villageLabelLayer],
-      ...tourismLayers.map(
-        ({ id, layer }) => [id, layer] as [string, VectorLayer],
-      ),
-      ...facilityLayers.map(({ id, layer }) => [id, layer] as [string, VectorLayer]),
-      ...disasterLayers.map(
-        ({ id, layer }) => [id, layer] as [string, VectorLayer],
-      ),
-      ['layer-land-use-planning', planningComparisonLayer],
-    ];
-    const populatedLayerIds = new Set(populatedLayers.map(([id]) => id));
+    villageLayerRef.current = editableLayer;
     const emptyCatalogLayers: Array<[string, VectorLayer]> = INITIAL_MAP_LAYERS
-      .filter((layer) => !populatedLayerIds.has(layer.id))
       .map((layer, index) => [
         layer.id,
         new VectorLayer({
@@ -1051,7 +846,7 @@ export default function MapClient({
           zIndex: 35 + (index % 10),
         }),
       ]);
-    const registeredLayers = [...populatedLayers, ...emptyCatalogLayers];
+    const registeredLayers = emptyCatalogLayers;
     registeredLayers.forEach(([id, layer]) => {
       layer.set('layerId', id);
       layer.setVisible(false);
@@ -1176,9 +971,13 @@ export default function MapClient({
     const selection = new Select({
       layers: [editableLayer],
       filter: (feature) => feature.get('status') !== 'saved',
-      style: (feature) => [
+      style: (feature, resolution) => [
         selectedEditableStyle,
-        editableFeatureStyle(feature),
+        demoFeatureStyle(
+          feature,
+          mapStateRef.current.selectedVillageCode,
+          resolution,
+        ),
       ],
       hitTolerance: 8,
     });
@@ -1221,6 +1020,16 @@ export default function MapClient({
         },
       );
       if (savedEditableFeature) {
+        if (savedEditableFeature.get('layerId') === 'layer-villages') {
+          const code = savedEditableFeature.get('villageCode');
+          if (typeof code === 'string') {
+            const current = mapStateRef.current.selectedVillageCode;
+            mapStateRef.current.setSelectedVillageCode(
+              current === code ? null : code,
+            );
+            editableLayer.changed();
+          }
+        }
         selectInteractionRef.current?.getFeatures().clear();
         clearSelectedFeatureState();
         const savedGeometry = savedEditableFeature.getGeometry();
@@ -1234,19 +1043,6 @@ export default function MapClient({
       }
 
       closeSavedObjectPopup();
-      const villageFeature = map.forEachFeatureAtPixel(
-        event.pixel,
-        (feature) => feature,
-        { layerFilter: (layer) => layer === villageLayer },
-      );
-      if (villageFeature) {
-        const code = villageFeature.get('villageCode');
-        if (typeof code === 'string') {
-          const current = mapStateRef.current.selectedVillageCode;
-          mapStateRef.current.setSelectedVillageCode(current === code ? null : code);
-          villageLayer.changed();
-        }
-      }
     });
     eventKeysRef.current.push(clickKey);
 
@@ -1263,15 +1059,6 @@ export default function MapClient({
       refreshEditableFeatureStats,
     );
     eventKeysRef.current.push(addKey, removeKey, clearKey);
-
-    const extent = communeSource.getExtent();
-    if (extent && extent.every(Number.isFinite)) {
-      map.getView().fit(extent, {
-        padding: [80, 80, 80, 80],
-        duration: 0,
-        maxZoom: 14,
-      });
-    }
 
     setMapReady(true);
 
@@ -1296,6 +1083,7 @@ export default function MapClient({
       graticuleRef.current = null;
       tileSourceCache.clear();
       villageLayerRef.current = null;
+      hasFitDemoDataRef.current = false;
       editableLayerRef.current = null;
       selectInteractionRef.current = null;
       registry.clear();
@@ -1309,6 +1097,46 @@ export default function MapClient({
     openSavedObjectPopup,
     refreshEditableFeatureStats,
   ]);
+
+  React.useEffect(() => {
+    if (!mapReady || !mapRef.current) return;
+
+    const controller = new AbortController();
+    const loadDemoData = async () => {
+      try {
+        const collection = await fetchDemoGisFeatures(controller.signal);
+        if (controller.signal.aborted) return;
+
+        const features = readGeoJsonFeatures(collection);
+        const source = editableSourceRef.current;
+        source.clear();
+        source.addFeatures(features);
+        refreshEditableFeatureStats();
+
+        if (!hasFitDemoDataRef.current) {
+          const communeFeature = features.find(
+            (feature) => feature.get('layerId') === 'layer-commune',
+          );
+          const extent = communeFeature?.getGeometry()?.getExtent();
+          if (extent && extent.every(Number.isFinite)) {
+            mapRef.current?.getView().fit(extent, {
+              padding: [80, 80, 80, 80],
+              duration: 0,
+              maxZoom: 14,
+            });
+            hasFitDemoDataRef.current = true;
+          }
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error('Không thể tải dữ liệu GIS demo', error);
+        toast.error('Không thể tải dữ liệu GIS demo dùng chung.');
+      }
+    };
+
+    void loadDemoData();
+    return () => controller.abort();
+  }, [mapReady, refreshEditableFeatureStats]);
 
   React.useEffect(() => {
     if (!mapReady) return;
@@ -1513,7 +1341,10 @@ export default function MapClient({
         activeDrawInteractionRef.current = null;
         setIsDrawing(false);
         const id = `object-${geometryKind}-${Date.now()}`;
-        const objectNumber = source.getFeatures().length + 1;
+        const objectNumber =
+          source
+            .getFeatures()
+            .filter((feature) => feature.get('source') === 'user').length + 1;
         const defaultName = `${editableGeometryLabels[geometryKind]} mới ${objectNumber}`;
         event.feature.setId(id);
         event.feature.setProperties({
@@ -1522,6 +1353,8 @@ export default function MapClient({
           layerId: '',
           description: '',
           status: 'draft',
+          source: 'user',
+          dataAccuracy: 'approximate',
           creationMethod: 'draw',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -1745,7 +1578,10 @@ export default function MapClient({
     setIsDrawing(false);
 
     const source = editableSourceRef.current;
-    const objectNumber = source.getFeatures().length + 1;
+    const objectNumber =
+      source
+        .getFeatures()
+        .filter((item) => item.get('source') === 'user').length + 1;
     const id = `object-${geometryKind}-${Date.now()}`;
     const now = new Date().toISOString();
     const feature = new Feature({
@@ -1755,6 +1591,8 @@ export default function MapClient({
       layerId: '',
       description: '',
       status: 'draft',
+      source: 'user',
+      dataAccuracy: 'approximate',
       creationMethod: 'coordinates',
       createdAt: now,
       updatedAt: now,
@@ -1791,7 +1629,7 @@ export default function MapClient({
     );
   }
 
-  function saveSelectedFeature() {
+  async function saveSelectedFeature() {
     const feature = selectInteractionRef.current?.getFeatures().item(0);
     if (!feature) {
       setFeatureFormError('Hãy chọn một đối tượng để lưu.');
@@ -1808,9 +1646,27 @@ export default function MapClient({
       return;
     }
 
+    const featureId = String(feature.getId() ?? selectedFeatureId ?? '');
+    if (!featureId) {
+      setFeatureFormError('Đối tượng chưa có mã định danh.');
+      return;
+    }
+
+    const geometryKind = editableGeometryKind(feature);
+    if (!geometryKind) {
+      setFeatureFormError('Kiểu hình học của đối tượng không được hỗ trợ.');
+      return;
+    }
+
     const now = new Date().toISOString();
     const selectedLayer = MAP_LAYER_BY_ID.get(selectedFeatureLayerId);
-    feature.setProperties({
+    const serializedFeature = geoJsonFormat.writeFeatureObject(feature, {
+      dataProjection: 'EPSG:4326',
+      featureProjection: 'EPSG:3857',
+      decimals: 7,
+    });
+    const properties: Record<string, unknown> = {
+      ...(serializedFeature.properties ?? {}),
       name,
       layerId: selectedFeatureLayerId,
       category: selectedLayer?.name ?? '',
@@ -1820,26 +1676,54 @@ export default function MapClient({
         selectedGeometryKind === 'polygon'
           ? selectedFeatureFillColor
           : undefined,
-      objectType: editableGeometryKind(feature),
-      status: 'saved',
+      objectType: geometryKind,
+      status: 'saved' as const,
+      source: feature.get('source') === 'seed' ? ('seed' as const) : ('user' as const),
+      dataAccuracy:
+        feature.get('dataAccuracy') === 'verified'
+          ? ('verified' as const)
+          : ('approximate' as const),
+      createdAt: String(feature.get('createdAt') ?? now),
       updatedAt: now,
       savedAt: feature.get('savedAt') ?? now,
-    });
-    feature.unset('previewLayerId', true);
-    feature.unset('previewStrokeColor', true);
-    feature.unset('previewFillColor', true);
-    feature.changed();
-    editableSourceRef.current.changed();
+    };
+    delete properties.previewLayerId;
+    delete properties.previewStrokeColor;
+    delete properties.previewFillColor;
+
+    const demoFeature = {
+      ...serializedFeature,
+      id: featureId,
+      properties,
+    } as unknown as DemoGisFeature;
+
+    setIsPersisting(true);
     setFeatureFormError(null);
-    if (!mapState.activeLayerIds.includes(selectedFeatureLayerId)) {
-      mapState.toggleLayer(selectedFeatureLayerId);
+    try {
+      const persistedFeature = await persistDemoGisFeature(demoFeature);
+      feature.setProperties(persistedFeature.properties);
+      feature.unset('previewLayerId', true);
+      feature.unset('previewStrokeColor', true);
+      feature.unset('previewFillColor', true);
+      feature.changed();
+      editableSourceRef.current.changed();
+      if (!mapState.activeLayerIds.includes(selectedFeatureLayerId)) {
+        mapState.toggleLayer(selectedFeatureLayerId);
+      }
+      refreshEditableFeatureStats();
+      selectInteractionRef.current?.getFeatures().clear();
+      clearSelectedFeatureState();
+      if (editorMode === 'modify') setEditorMode('view');
+      onObjectEditorClose?.();
+      toast.success(`Đã lưu ${name} vào dữ liệu demo dùng chung.`);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Không thể lưu đối tượng.';
+      setFeatureFormError(message);
+      toast.error('Không thể lưu đối tượng vào dữ liệu demo.');
+    } finally {
+      setIsPersisting(false);
     }
-    refreshEditableFeatureStats();
-    selectInteractionRef.current?.getFeatures().clear();
-    clearSelectedFeatureState();
-    if (editorMode === 'modify') setEditorMode('view');
-    onObjectEditorClose?.();
-    toast.success(`Đã lưu ${name} trong phiên làm việc POC.`);
   }
 
   function deselectEditableFeature() {
@@ -1883,36 +1767,72 @@ export default function MapClient({
     onObjectEditorOpen?.();
   }
 
-  function deleteSelectedFeature() {
+  async function deleteSelectedFeature() {
     const selection = selectInteractionRef.current?.getFeatures();
     const feature = selection?.item(0);
     if (!feature) return;
-    editableSourceRef.current.removeFeature(feature);
-    selection?.clear();
-    clearSelectedFeatureState();
-    if (editorMode === 'modify') setEditorMode('view');
-    onObjectEditorClose?.();
-    toast.success('Đã xóa đối tượng.');
+
+    const featureId = String(feature.getId() ?? '');
+    setIsPersisting(true);
+    try {
+      if (feature.get('status') === 'saved' && featureId) {
+        await deletePersistedDemoGisFeature(featureId);
+      }
+      editableSourceRef.current.removeFeature(feature);
+      selection?.clear();
+      clearSelectedFeatureState();
+      if (editorMode === 'modify') setEditorMode('view');
+      onObjectEditorClose?.();
+      toast.success('Đã xóa đối tượng khỏi dữ liệu demo dùng chung.');
+    } catch (error) {
+      console.error('Không thể xóa đối tượng GIS demo', error);
+      toast.error('Không thể xóa đối tượng khỏi dữ liệu demo.');
+    } finally {
+      setIsPersisting(false);
+    }
   }
 
-  function clearEditableFeatures() {
+  async function clearEditableFeatures() {
     activeDrawInteractionRef.current?.abortDrawing();
     setEditorMode('view');
     setIsDrawing(false);
-    editableSourceRef.current.clear();
-    selectInteractionRef.current?.getFeatures().clear();
-    clearSelectedFeatureState();
-    closeSavedObjectPopup();
-    onObjectEditorClose?.();
-    toast.success('Đã xóa toàn bộ đối tượng POC.');
+    setIsPersisting(true);
+    try {
+      const { deletedCount } = await deleteUserDemoGisFeatures();
+      editableSourceRef.current
+        .getFeatures()
+        .filter((feature) => feature.get('source') === 'user')
+        .forEach((feature) =>
+          editableSourceRef.current.removeFeature(feature),
+        );
+      selectInteractionRef.current?.getFeatures().clear();
+      clearSelectedFeatureState();
+      closeSavedObjectPopup();
+      onObjectEditorClose?.();
+      toast.success(
+        deletedCount > 0
+          ? `Đã xóa ${deletedCount} đối tượng POC dùng chung.`
+          : 'Đã xóa các bản nháp POC trên bản đồ.',
+      );
+    } catch (error) {
+      console.error('Không thể xóa dữ liệu POC dùng chung', error);
+      toast.error('Không thể xóa toàn bộ đối tượng POC.');
+    } finally {
+      setIsPersisting(false);
+    }
   }
 
   function exportEditableGeoJson() {
-    const data = geoJsonFormat.writeFeaturesObject(editableSourceRef.current.getFeatures(), {
-      dataProjection: 'EPSG:4326',
-      featureProjection: 'EPSG:3857',
-      decimals: 7,
-    });
+    const data = geoJsonFormat.writeFeaturesObject(
+      editableSourceRef.current
+        .getFeatures()
+        .filter((feature) => feature.get('source') === 'user'),
+      {
+        dataProjection: 'EPSG:4326',
+        featureProjection: 'EPSG:3857',
+        decimals: 7,
+      },
+    );
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: 'application/geo+json',
     });
@@ -1994,6 +1914,30 @@ export default function MapClient({
               {savedObjectPopup.description || 'Chưa có mô tả cho đối tượng này.'}
             </p>
 
+            {Object.keys(savedObjectPopup.details).length > 0 && (
+              <dl className="mt-2 max-h-28 space-y-1 overflow-y-auto border-t border-border/50 pt-2 pr-3 text-[10px] leading-4 [scrollbar-gutter:stable]">
+                {Object.entries(savedObjectPopup.details).map(
+                  ([label, value]) => (
+                    <div
+                      key={label}
+                      className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] gap-2"
+                    >
+                      <dt className="text-muted-foreground">{label}</dt>
+                      <dd className="break-words text-right font-medium">
+                        {value === null || value === ''
+                          ? '—'
+                          : typeof value === 'boolean'
+                            ? value
+                              ? 'Có'
+                              : 'Không'
+                            : String(value)}
+                      </dd>
+                    </div>
+                  ),
+                )}
+              </dl>
+            )}
+
             <div className="mt-2.5 flex items-center justify-between border-t border-border/60 pt-2.5">
               <span className="rounded bg-muted px-1.5 py-0.5 text-[9px]">
                 {editableGeometryLabels[savedObjectPopup.geometryKind]}
@@ -2019,8 +1963,8 @@ export default function MapClient({
           <div>
             <p className="text-xs font-bold text-foreground">Biên tập đối tượng (POC)</p>
             <p className="text-[9px] text-muted-foreground">
-              {savedFeatureCount} đã lưu · {draftFeatureCount} nháp · lưu trong
-              phiên, chưa gửi backend
+              {savedFeatureCount} đã lưu · {draftFeatureCount} nháp · dữ liệu
+              demo dùng chung
             </p>
           </div>
           {selectedFeatureId && (
@@ -2064,7 +2008,7 @@ export default function MapClient({
             size="xs"
             variant="outline"
             onClick={deleteSelectedFeature}
-            disabled={!selectedFeatureId}
+            disabled={!selectedFeatureId || isPersisting}
             className="h-7 gap-1 px-2 text-[10px] text-destructive shadow-none"
             title="Xóa đối tượng đang chọn"
           >
@@ -2075,7 +2019,7 @@ export default function MapClient({
             size="xs"
             variant="outline"
             onClick={clearEditableFeatures}
-            disabled={editableFeatureCount === 0}
+            disabled={editableFeatureCount === 0 || isPersisting}
             className="h-7 gap-1 px-2 text-[10px] shadow-none"
             title="Xóa toàn bộ bản nháp"
           >
@@ -2086,7 +2030,7 @@ export default function MapClient({
             size="xs"
             variant="outline"
             onClick={exportEditableGeoJson}
-            disabled={editableFeatureCount === 0}
+            disabled={editableFeatureCount === 0 || isPersisting}
             className="h-7 gap-1 px-2 text-[10px] shadow-none"
             title="Xuất GeoJSON"
           >
@@ -2333,10 +2277,11 @@ export default function MapClient({
                 type="button"
                 size="xs"
                 onClick={saveSelectedFeature}
+                disabled={isPersisting}
                 className="h-7 gap-1 px-2 text-[10px] shadow-none"
               >
                 <Save className="size-3" />
-                Lưu đối tượng
+                {isPersisting ? 'Đang lưu...' : 'Lưu đối tượng'}
               </Button>
             </div>
           </div>

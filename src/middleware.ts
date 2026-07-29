@@ -44,5 +44,5 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   // Skip api routes, static files, images, and favicon
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico)$).*)'],
+  matcher: ['/((?!api|demo-data-api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico)$).*)'],
 };
