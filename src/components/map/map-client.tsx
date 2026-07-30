@@ -5,6 +5,7 @@ import * as React from 'react';
 import Feature from 'ol/Feature';
 import GeoJSON from 'ol/format/GeoJSON';
 import LineString from 'ol/geom/LineString';
+import MultiPolygon from 'ol/geom/MultiPolygon';
 import Point from 'ol/geom/Point';
 import Polygon from 'ol/geom/Polygon';
 import Graticule from 'ol/layer/Graticule';
@@ -348,6 +349,12 @@ function editableFeatureStyle(feature: FeatureLike, resolution = 0) {
   if (cachedStyle) return cachedStyle;
 
   const style = new Style({
+    zIndex:
+      geometryType === 'Point'
+        ? 30
+        : geometryType === 'LineString'
+          ? 20
+          : 10,
     stroke: new Stroke({
       color,
       width: layerConfig?.styleConfig.weight ?? 3,
@@ -450,10 +457,48 @@ function demoFeatureStyle(
 
 function editableGeometryKind(feature: Feature): EditableGeometryKind | null {
   const geometryType = feature.getGeometry()?.getType();
-  if (geometryType === 'Point') return 'point';
-  if (geometryType === 'LineString') return 'line';
-  if (geometryType === 'Polygon') return 'polygon';
+  if (geometryType === 'Point' || geometryType === 'MultiPoint') return 'point';
+  if (geometryType === 'LineString' || geometryType === 'MultiLineString') {
+    return 'line';
+  }
+  if (geometryType === 'Polygon' || geometryType === 'MultiPolygon') {
+    return 'polygon';
+  }
   return null;
+}
+
+function savedFeatureGeometryPriority(geometryType: string | undefined) {
+  if (geometryType === 'Point' || geometryType === 'MultiPoint') return 0;
+  if (geometryType === 'LineString' || geometryType === 'MultiLineString') {
+    return 1;
+  }
+  if (geometryType === 'Polygon' || geometryType === 'MultiPolygon') return 2;
+  return 3;
+}
+
+function savedFeatureGeometryArea(feature: Feature) {
+  const geometry = feature.getGeometry();
+  if (geometry instanceof Polygon || geometry instanceof MultiPolygon) {
+    return geometry.getArea();
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+function compareSavedFeatureHitPriority(
+  firstFeature: Feature,
+  secondFeature: Feature,
+) {
+  const firstGeometry = firstFeature.getGeometry();
+  const secondGeometry = secondFeature.getGeometry();
+  const priorityDifference =
+    savedFeatureGeometryPriority(firstGeometry?.getType()) -
+    savedFeatureGeometryPriority(secondGeometry?.getType());
+  if (priorityDifference !== 0) return priorityDifference;
+
+  return (
+    savedFeatureGeometryArea(firstFeature) -
+    savedFeatureGeometryArea(secondFeature)
+  );
 }
 
 const editableGeometryLabels: Record<EditableGeometryKind, string> = {
@@ -1003,22 +1048,17 @@ export default function MapClient({
     eventKeysRef.current.push(selectionKey);
 
     const clickKey = map.on('singleclick', (event) => {
-      const savedEditableFeature = map.forEachFeatureAtPixel(
-        event.pixel,
-        (feature) => {
-          if (
-            feature instanceof Feature &&
-            feature.get('status') === 'saved'
-          ) {
-            return feature;
-          }
-          return undefined;
-        },
-        {
+      const savedEditableFeature = map
+        .getFeaturesAtPixel(event.pixel, {
           hitTolerance: 8,
           layerFilter: (layer) => layer === editableLayer,
-        },
-      );
+        })
+        .filter(
+          (feature): feature is Feature =>
+            feature instanceof Feature &&
+            feature.get('status') === 'saved',
+        )
+        .sort(compareSavedFeatureHitPriority)[0];
       if (savedEditableFeature) {
         if (savedEditableFeature.get('layerId') === 'layer-villages') {
           const code = savedEditableFeature.get('villageCode');

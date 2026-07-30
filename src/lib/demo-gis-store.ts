@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   DEMO_GIS_SEED,
+  DEMO_GIS_RETIRED_SEED_IDS,
   DEMO_GIS_SEED_VERSION,
 } from '@/data/demo-gis-seed';
 import { MAP_LAYER_BY_ID } from '@/data/gis-layer-catalog';
@@ -45,8 +46,12 @@ async function readCollectionUnsafe(): Promise<DemoGisFeatureCollection> {
       throw new Error('File dữ liệu demo không đúng định dạng FeatureCollection.');
     }
     if ((parsed.demoSeedVersion ?? 0) < DEMO_GIS_SEED_VERSION) {
+      const retiredSeedIds = new Set<string>(DEMO_GIS_RETIRED_SEED_IDS);
+      const retainedFeatures = parsed.features.filter(
+        (feature) => !retiredSeedIds.has(String(feature.id)),
+      );
       const existingIds = new Set(
-        parsed.features.map((feature) => String(feature.id)),
+        retainedFeatures.map((feature) => String(feature.id)),
       );
       const missingSeedFeatures = DEMO_GIS_SEED.features.filter(
         (feature) => !existingIds.has(String(feature.id)),
@@ -55,7 +60,7 @@ async function readCollectionUnsafe(): Promise<DemoGisFeatureCollection> {
         ...parsed,
         demoSeedVersion: DEMO_GIS_SEED_VERSION,
         features: [
-          ...parsed.features,
+          ...retainedFeatures,
           ...structuredClone(missingSeedFeatures),
         ],
       };
@@ -193,5 +198,37 @@ export async function resetDemoGisFeatures() {
     const seed = cloneSeed();
     await writeCollection(seed);
     return seed;
+  });
+}
+
+export async function migrateDemoGisSeed() {
+  return runExclusive(async () => {
+    const collection = await readCollectionUnsafe();
+    const seed = cloneSeed();
+    const preservedFeatures = collection.features.filter(
+      (feature) => feature.properties.source !== 'seed',
+    );
+    const seedIds = new Set(
+      seed.features.map((feature) => String(feature.id)),
+    );
+    const preservedWithoutSeedIdCollision = preservedFeatures.filter(
+      (feature) => !seedIds.has(String(feature.id)),
+    );
+    const migratedCollection: DemoGisFeatureCollection = {
+      ...seed,
+      features: [
+        ...seed.features,
+        ...preservedWithoutSeedIdCollision,
+      ],
+    };
+
+    await writeCollection(migratedCollection);
+    return {
+      collection: migratedCollection,
+      replacedSeedCount: seed.features.length,
+      preservedFeatureCount: preservedWithoutSeedIdCollision.length,
+      skippedIdCollisionCount:
+        preservedFeatures.length - preservedWithoutSeedIdCollision.length,
+    };
   });
 }

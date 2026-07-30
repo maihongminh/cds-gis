@@ -23,7 +23,15 @@ import type {
 } from '@/types/demo-gis';
 
 const SEED_TIMESTAMP = '2026-07-29T00:00:00.000Z';
-export const DEMO_GIS_SEED_VERSION = 1;
+export const DEMO_GIS_SEED_VERSION = 3;
+export const DEMO_GIS_RETIRED_SEED_IDS = [
+  'demo-layer-households',
+  'demo-layer-working-age-population',
+  ...VILLAGES.flatMap((village) =>
+    [1, 2, 3].map((index) => `household-${village.code}-${index}`),
+  ),
+  ...VILLAGES.map((village) => `working-age-zone-${village.code}`),
+] as const;
 
 const tourismLayerIds = {
   tourist_attraction: 'layer-tourist-attractions',
@@ -183,6 +191,223 @@ const villageLabelFeatures = VILLAGES.flatMap((village) => {
   ];
 });
 
+interface ResidentialCluster {
+  id: string;
+  name: string;
+  areaDescription: string;
+  buildingCenters: Array<[number, number]>;
+}
+
+const residentialClusters: ResidentialCluster[] = [
+  {
+    id: 'central-1',
+    name: 'Cụm dân cư trung tâm 1',
+    areaDescription: 'Khu Lê Thế Tiết - Thạch Hãn',
+    buildingCenters: [
+      [106.5870917, 16.6111822],
+      [106.586456, 16.6118402],
+      [106.5869152, 16.6119096],
+      [106.5870032, 16.6120535],
+      [106.5862818, 16.6121743],
+      [106.5860268, 16.6120998],
+    ],
+  },
+  {
+    id: 'central-2',
+    name: 'Cụm dân cư trung tâm 2',
+    areaDescription: 'Khu Lê Lai - Lê Thế Tiết',
+    buildingCenters: [
+      [106.5926063, 16.6112079],
+      [106.5923461, 16.6111102],
+      [106.5923515, 16.6113004],
+      [106.5926385, 16.6114392],
+      [106.5923606, 16.6114392],
+      [106.592214, 16.6111591],
+    ],
+  },
+  {
+    id: 'central-3',
+    name: 'Cụm dân cư trung tâm 3',
+    areaDescription: 'Khu Thạch Hãn - Lê Văn Huân',
+    buildingCenters: [
+      [106.5985681, 16.6112259],
+      [106.5985073, 16.6110999],
+      [106.5984143, 16.6112901],
+      [106.5983543, 16.6110948],
+      [106.598393, 16.6114803],
+      [106.598795, 16.611321],
+    ],
+  },
+  {
+    id: 'central-4',
+    name: 'Cụm dân cư trung tâm 4',
+    areaDescription: 'Khu phía tây đường Lê Quý Đôn',
+    buildingCenters: [
+      [106.5865204, 16.6139426],
+      [106.5868269, 16.6139606],
+      [106.5867645, 16.6137679],
+      [106.5869827, 16.6137936],
+      [106.5871802, 16.6138347],
+      [106.5868235, 16.6134517],
+    ],
+  },
+  {
+    id: 'central-5',
+    name: 'Cụm dân cư trung tâm 5',
+    areaDescription: 'Khu trung tâm đường Lê Quý Đôn',
+    buildingCenters: [
+      [106.5925492, 16.6146417],
+      [106.5923957, 16.6147214],
+      [106.5929548, 16.6142819],
+      [106.5919962, 16.6142768],
+      [106.5923148, 16.6138681],
+      [106.5931342, 16.6140377],
+    ],
+  },
+  {
+    id: 'central-6',
+    name: 'Cụm dân cư trung tâm 6',
+    areaDescription: 'Khu phía đông đường Lê Quý Đôn',
+    buildingCenters: [
+      [106.5983873, 16.6144413],
+      [106.5982868, 16.6143385],
+      [106.5983731, 16.6141508],
+      [106.5982263, 16.6142048],
+      [106.5983821, 16.6138758],
+      [106.5981098, 16.6139375],
+    ],
+  },
+];
+
+interface HouseholdDemoRecord {
+  id: string;
+  clusterId: string;
+  coordinates: [number, number];
+  memberCount: number;
+  workingAgeMemberCount: number;
+  feature: DemoGisFeature;
+}
+
+const householdDemoRecords: HouseholdDemoRecord[] =
+  residentialClusters.flatMap((cluster, clusterIndex) =>
+    cluster.buildingCenters.map((coordinates, index) => {
+      const sequence = clusterIndex * cluster.buildingCenters.length + index + 1;
+      const householdCode = `HD-LB-${String(sequence).padStart(3, '0')}`;
+      const memberCount = 3 + ((clusterIndex + index) % 4);
+      const workingAgeMemberCount = Math.max(
+        1,
+        memberCount - 1 - ((clusterIndex + index) % 2),
+      );
+      const id = `household-building-${String(sequence).padStart(3, '0')}`;
+      const feature = createSeedFeature(
+        id,
+        'layer-households',
+        { type: 'Point', coordinates },
+        {
+          name: `Hộ dân mẫu ${householdCode}`,
+          description: `Hộ dân mô phỏng.`,
+          details: {
+            'Mã hộ': householdCode,
+            'Khu vực': cluster.areaDescription,
+            'Vị trí nhà': '',
+            'Số nhân khẩu': memberCount,
+            'Trong độ tuổi lao động': workingAgeMemberCount,
+            'Tình trạng nhà ở':
+              (clusterIndex + index) % 3 === 0
+                ? 'Nhà kiên cố'
+                : 'Nhà bán kiên cố',
+            'Nguồn vị trí':
+              '',
+          },
+          extra: {
+            householdCode,
+            residentialClusterId: cluster.id,
+            residentialClusterName: cluster.name,
+            memberCount,
+            workingAgeMemberCount,
+            buildingFootprintMatched: true,
+            mockGenerated: true,
+          },
+        },
+      );
+
+      return {
+        id,
+        clusterId: cluster.id,
+        coordinates,
+        memberCount,
+        workingAgeMemberCount,
+        feature,
+      };
+    }),
+  );
+
+const householdFeatures = householdDemoRecords.map((record) => record.feature);
+
+const workingAgeZoneFeatures = residentialClusters.map((cluster) => {
+  const households = householdDemoRecords.filter(
+    (record) => record.clusterId === cluster.id,
+  );
+  const longitudes = households.map(
+    (household) => household.coordinates[0],
+  );
+  const latitudes = households.map((household) => household.coordinates[1]);
+  const padding = 0.00018;
+  const minimumLongitude = Math.min(...longitudes) - padding;
+  const maximumLongitude = Math.max(...longitudes) + padding;
+  const minimumLatitude = Math.min(...latitudes) - padding;
+  const maximumLatitude = Math.max(...latitudes) + padding;
+  const population = households.reduce(
+    (total, household) => total + household.memberCount,
+    0,
+  );
+  const workingAgePopulation = households.reduce(
+    (total, household) => total + household.workingAgeMemberCount,
+    0,
+  );
+  const workingAgeRate = Number(
+    ((workingAgePopulation / population) * 100).toFixed(1),
+  );
+
+  return createSeedFeature(
+    `working-age-cluster-${cluster.id}`,
+    'layer-working-age-population',
+    {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [minimumLongitude, minimumLatitude],
+          [maximumLongitude, minimumLatitude],
+          [maximumLongitude, maximumLatitude],
+          [minimumLongitude, maximumLatitude],
+          [minimumLongitude, minimumLatitude],
+        ],
+      ],
+    },
+    {
+      name: `Vùng độ tuổi lao động - ${cluster.name}`,
+      description: `Vùng tổng hợp mô phỏng.`,
+      details: {
+        'Khu vực': cluster.areaDescription,
+        'Số hộ mẫu': households.length,
+        'Tổng nhân khẩu mẫu': population,
+        'Trong độ tuổi lao động': workingAgePopulation,
+        'Tỷ lệ độ tuổi lao động (%)': workingAgeRate,
+        Nguồn: 'Tổng hợp từ cụm hộ dân mô phỏng',
+      },
+      extra: {
+        residentialClusterId: cluster.id,
+        residentialClusterName: cluster.name,
+        householdIds: households.map((household) => household.id),
+        population,
+        workingAgePopulation,
+        workingAgeRate,
+        mockGenerated: true,
+      },
+    },
+  );
+});
+
 const tourismFeatures = MOCK_TOURISM_POIS.map((poi) => {
   const layerId = tourismLayerIds[poi.type];
   return createSeedFeature(
@@ -295,6 +520,8 @@ const baseSeedFeatures = [
   ...communeFeatures,
   ...villageBoundaryFeatures,
   ...villageLabelFeatures,
+  ...householdFeatures,
+  ...workingAgeZoneFeatures,
   ...tourismFeatures,
   ...facilityFeatures,
   ...disasterFeatures,

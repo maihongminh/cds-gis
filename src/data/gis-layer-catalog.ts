@@ -151,7 +151,14 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     'Hộ dân',
     'administrative_population',
     'point',
-    { color: '#2563eb', icon: 'Building' },
+    {
+      color: '#2563eb',
+      icon: 'House',
+      markerIcon: 'home',
+      source: 'Dữ liệu mô phỏng POC',
+      updateFrequency: 'Theo đợt rà soát',
+      featureCount: 36,
+    },
   ),
   defineLayer(
     'layer-population-ethnicity',
@@ -165,7 +172,13 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     'Theo độ tuổi lao động',
     'administrative_population',
     'polygon',
-    { color: '#0891b2', fillColor: '#67e8f9' },
+    {
+      color: '#0891b2',
+      fillColor: '#67e8f9',
+      source: 'Tổng hợp từ cụm hộ dân mô phỏng',
+      updateFrequency: 'Theo đợt rà soát',
+      featureCount: 6,
+    },
   ),
 
   defineLayer(

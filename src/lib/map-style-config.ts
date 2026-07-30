@@ -144,6 +144,7 @@ export type MapMarkerIconName =
   | 'building'
   | 'camera'
   | 'flag'
+  | 'home'
   | 'infrastructure'
   | 'landmark'
   | 'market'
@@ -163,6 +164,8 @@ const MAP_MARKER_ICON_PATHS: Record<MapMarkerIconName, string> = {
   camera:
     '<path d="M4 8h3l1.5-2h7L17 8h3v11H4V8Z"/><circle cx="12" cy="13.5" r="3.5"/>',
   flag: '<path d="M6 21V4m0 1h11l-2 4 2 4H6"/>',
+  home:
+    '<path d="m3 11 9-8 9 8M5 10v11h14V10M9 21v-7h6v7"/>',
   infrastructure:
     '<path d="m14.7 6.3 3-3a5 5 0 0 1-6.4 6.4l-6.6 6.6a2.1 2.1 0 0 0 3 3l6.6-6.6a5 5 0 0 1 6.4-6.4l-3 3-3-3Z"/>',
   landmark:

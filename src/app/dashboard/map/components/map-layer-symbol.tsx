@@ -5,6 +5,7 @@ import {
   Building,
   GraduationCap,
   HeartPulse,
+  House,
   Landmark,
   MapPin,
 } from 'lucide-react';
@@ -16,6 +17,7 @@ const LAYER_ICONS: Record<string, React.ElementType> = {
   Building,
   GraduationCap,
   HeartPulse,
+  House,
   Landmark,
   MapPin,
 };
