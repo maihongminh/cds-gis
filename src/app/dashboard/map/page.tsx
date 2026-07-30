@@ -51,6 +51,13 @@ export default function MapPage() {
     .map((l) => l.id);
 
   const [activeLayerIds, setActiveLayerIds] = React.useState<string[]>(defaultActiveIds);
+  const [layerFeatureCounts, setLayerFeatureCountsState] = React.useState<
+    Record<string, number>
+  >(() =>
+    Object.fromEntries(
+      INITIAL_MAP_LAYERS.map((layer) => [layer.id, layer.featureCount ?? 0]),
+    ),
+  );
   const [isSecurityUnlocked, setIsSecurityUnlocked] = React.useState(false);
   const [isSecurityDialogOpen, setIsSecurityDialogOpen] =
     React.useState(false);
@@ -151,6 +158,22 @@ export default function MapPage() {
     setIsSecurityUnlocked(false);
   }, [defaultActiveIds]);
 
+  const setLayerFeatureCounts = React.useCallback(
+    (counts: Record<string, number>) => {
+      setLayerFeatureCountsState((current) => {
+        const layerIds = new Set([
+          ...Object.keys(current),
+          ...Object.keys(counts),
+        ]);
+        const hasChanged = Array.from(layerIds).some(
+          (layerId) => (current[layerId] ?? 0) !== (counts[layerId] ?? 0),
+        );
+        return hasChanged ? counts : current;
+      });
+    },
+    [],
+  );
+
   function closeSecurityDialog() {
     setIsSecurityDialogOpen(false);
     setPendingSecurityAction(null);
@@ -212,6 +235,8 @@ export default function MapPage() {
       enableAllInGroup,
       disableAllInGroup,
       resetToDefaults,
+      layerFeatureCounts,
+      setLayerFeatureCounts,
       selectedVillageCode,
       setSelectedVillageCode,
       searchQuery,
@@ -228,6 +253,8 @@ export default function MapPage() {
       enableAllInGroup,
       disableAllInGroup,
       resetToDefaults,
+      layerFeatureCounts,
+      setLayerFeatureCounts,
       selectedVillageCode,
       searchQuery,
       flyToCoords,

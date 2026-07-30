@@ -84,6 +84,8 @@ export interface MapState {
   enableAllInGroup: (groupId: string) => void;
   disableAllInGroup: (groupId: string) => void;
   resetToDefaults: () => void;
+  layerFeatureCounts: Record<string, number>;
+  setLayerFeatureCounts: (counts: Record<string, number>) => void;
   selectedVillageCode: string | null;
   setSelectedVillageCode: (code: string | null) => void;
   searchQuery: string;
@@ -721,6 +723,17 @@ export default function MapClient({
     );
   }, []);
 
+  const refreshLayerFeatureCounts = React.useCallback(() => {
+    const counts: Record<string, number> = {};
+    editableSourceRef.current.getFeatures().forEach((feature) => {
+      if (feature.get('status') !== 'saved') return;
+      const layerId = String(feature.get('layerId') ?? '');
+      if (!layerId || !MAP_LAYER_BY_ID.has(layerId)) return;
+      counts[layerId] = (counts[layerId] ?? 0) + 1;
+    });
+    mapStateRef.current.setLayerFeatureCounts(counts);
+  }, []);
+
   const closeSavedObjectPopup = React.useCallback(() => {
     objectPopupOverlayRef.current?.setPosition(undefined);
     setSavedObjectPopup(null);
@@ -1152,6 +1165,7 @@ export default function MapClient({
         source.clear();
         source.addFeatures(features);
         refreshEditableFeatureStats();
+        refreshLayerFeatureCounts();
 
         if (!hasFitDemoDataRef.current) {
           const communeFeature = features.find(
@@ -1176,7 +1190,11 @@ export default function MapClient({
 
     void loadDemoData();
     return () => controller.abort();
-  }, [mapReady, refreshEditableFeatureStats]);
+  }, [
+    mapReady,
+    refreshEditableFeatureStats,
+    refreshLayerFeatureCounts,
+  ]);
 
   React.useEffect(() => {
     if (!mapReady) return;
@@ -1751,6 +1769,7 @@ export default function MapClient({
         mapState.toggleLayer(selectedFeatureLayerId);
       }
       refreshEditableFeatureStats();
+      refreshLayerFeatureCounts();
       selectInteractionRef.current?.getFeatures().clear();
       clearSelectedFeatureState();
       if (editorMode === 'modify') setEditorMode('view');
@@ -1819,6 +1838,7 @@ export default function MapClient({
         await deletePersistedDemoGisFeature(featureId);
       }
       editableSourceRef.current.removeFeature(feature);
+      refreshLayerFeatureCounts();
       selection?.clear();
       clearSelectedFeatureState();
       if (editorMode === 'modify') setEditorMode('view');
@@ -1845,6 +1865,7 @@ export default function MapClient({
         .forEach((feature) =>
           editableSourceRef.current.removeFeature(feature),
         );
+      refreshLayerFeatureCounts();
       selectInteractionRef.current?.getFeatures().clear();
       clearSelectedFeatureState();
       closeSavedObjectPopup();

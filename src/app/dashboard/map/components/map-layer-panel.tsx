@@ -174,6 +174,8 @@ function LayerPanelContent({ mapState }: { mapState: MapState }) {
             {isExpanded && <div className="space-y-1 pl-1">
               {groupLayers.map((layer) => {
                 const isActive = activeLayerIds.includes(layer.id);
+                const featureCount =
+                  mapState.layerFeatureCounts[layer.id] ?? 0;
                 return (
                   <label
                     key={layer.id}
@@ -187,9 +189,9 @@ function LayerPanelContent({ mapState }: { mapState: MapState }) {
                       <span className="text-[11px] text-foreground truncate">{layer.shortLabel ?? layer.name}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {layer.featureCount !== undefined && layer.featureCount > 0 && (
+                      {featureCount > 0 && (
                         <span className="text-[9px] font-mono text-muted-foreground">
-                          {layer.featureCount}
+                          {featureCount}
                         </span>
                       )}
                       <Checkbox
