@@ -217,6 +217,7 @@ export default function MapPage() {
   const [isLegendCollapsed, setIsLegendCollapsed] = React.useState(false);
   const [isAlertCollapsed, setIsAlertCollapsed] = React.useState(true);
   const restoreLayerPanelAfterEditRef = React.useRef(false);
+  const isPlanningComparisonActiveRef = React.useRef(false);
 
   // Detect mobile via window width (hydration-safe)
   const [isMobile, setIsMobile] = React.useState(false);
@@ -276,9 +277,35 @@ export default function MapPage() {
   }, []);
 
   const handleObjectEditorClose = React.useCallback(() => {
+    if (isPlanningComparisonActiveRef.current) return;
     if (!restoreLayerPanelAfterEditRef.current) return;
     restoreLayerPanelAfterEditRef.current = false;
     setIsLayerPanelOpen(true);
+  }, []);
+
+  const handlePlanningComparisonOpen = React.useCallback(() => {
+    isPlanningComparisonActiveRef.current = true;
+    setIsLayerPanelOpen((isOpen) => {
+      if (isOpen) restoreLayerPanelAfterEditRef.current = true;
+      return false;
+    });
+  }, []);
+
+  const handlePlanningComparisonClose = React.useCallback(() => {
+    isPlanningComparisonActiveRef.current = false;
+    if (!restoreLayerPanelAfterEditRef.current) return;
+    restoreLayerPanelAfterEditRef.current = false;
+    setIsLayerPanelOpen(true);
+  }, []);
+
+  const handleToggleLayerPanel = React.useCallback(() => {
+    if (isPlanningComparisonActiveRef.current) {
+      toast.info(
+        'Hãy hoàn tất hoặc đóng chế độ so sánh trước khi mở catalog lớp dữ liệu.',
+      );
+      return;
+    }
+    setIsLayerPanelOpen((isOpen) => !isOpen);
   }, []);
 
   return (
@@ -289,6 +316,8 @@ export default function MapPage() {
           mapState={mapState}
           onObjectEditorOpen={handleObjectEditorOpen}
           onObjectEditorClose={handleObjectEditorClose}
+          onPlanningComparisonOpen={handlePlanningComparisonOpen}
+          onPlanningComparisonClose={handlePlanningComparisonClose}
           minHeight={480}
         />
       </div>
@@ -298,7 +327,7 @@ export default function MapPage() {
         <div className="pointer-events-auto">
           <MapToolbar
             mapState={mapState}
-            onToggleLayerPanel={() => setIsLayerPanelOpen((p) => !p)}
+            onToggleLayerPanel={handleToggleLayerPanel}
             isLayerPanelOpen={isLayerPanelOpen}
             onFitCommune={handleFitCommune}
           />

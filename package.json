@@ -17,6 +17,8 @@
     "@number-flow/react": "^0.6.1",
     "@opennextjs/cloudflare": "^1.19.11",
     "@tanstack/react-query": "^5.90.21",
+    "@turf/area": "^7.3.5",
+    "@turf/intersect": "^7.3.5",
     "@visx/curve": "^4.0.0",
     "@visx/event": "^4.0.0",
     "@visx/gradient": "^4.0.0",

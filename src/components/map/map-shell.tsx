@@ -13,6 +13,8 @@ const MapClient = dynamic<{
   mapState: MapState;
   onObjectEditorOpen?: () => void;
   onObjectEditorClose?: () => void;
+  onPlanningComparisonOpen?: () => void;
+  onPlanningComparisonClose?: () => void;
 }>(
   () => import('./map-client').then((m) => ({ default: m.default })),
   {
@@ -25,6 +27,8 @@ interface MapShellProps {
   mapState: MapState;
   onObjectEditorOpen?: () => void;
   onObjectEditorClose?: () => void;
+  onPlanningComparisonOpen?: () => void;
+  onPlanningComparisonClose?: () => void;
   /** Optional: minimum height override */
   minHeight?: number;
 }
@@ -33,6 +37,8 @@ export function MapShell({
   mapState,
   onObjectEditorOpen,
   onObjectEditorClose,
+  onPlanningComparisonOpen,
+  onPlanningComparisonClose,
   minHeight = 500,
 }: MapShellProps) {
   return (
@@ -42,6 +48,8 @@ export function MapShell({
           mapState={mapState}
           onObjectEditorOpen={onObjectEditorOpen}
           onObjectEditorClose={onObjectEditorClose}
+          onPlanningComparisonOpen={onPlanningComparisonOpen}
+          onPlanningComparisonClose={onPlanningComparisonClose}
         />
       </div>
     </MapErrorBoundary>

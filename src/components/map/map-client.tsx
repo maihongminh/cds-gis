@@ -2,6 +2,8 @@
 'use client';
 
 import * as React from 'react';
+import turfArea from '@turf/area';
+import intersect from '@turf/intersect';
 import Feature from 'ol/Feature';
 import GeoJSON from 'ol/format/GeoJSON';
 import LineString from 'ol/geom/LineString';
@@ -36,6 +38,7 @@ import { apply as applyMapboxStyle } from 'ol-mapbox-style';
 import {
   Download,
   Eraser,
+  GitCompareArrows,
   MapPinPlus,
   Pentagon,
   Pencil,
@@ -46,6 +49,12 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import type {
+  Feature as GeoJsonFeature,
+  FeatureCollection as GeoJsonFeatureCollection,
+  MultiPolygon as GeoJsonMultiPolygon,
+  Polygon as GeoJsonPolygon,
+} from 'geojson';
 
 import {
   Button,
@@ -66,7 +75,6 @@ import {
 } from '@/data/mock-map-layers';
 import {
   deleteDemoGisFeature as deletePersistedDemoGisFeature,
-  deleteUserDemoGisFeatures,
   fetchDemoGisFeatures,
   saveDemoGisFeature as persistDemoGisFeature,
 } from '@/lib/demo-gis-api';
@@ -111,7 +119,50 @@ interface SavedObjectPopup {
   details: Record<string, string | number | boolean | null>;
 }
 
+type PlanningPolygonGeometry = GeoJsonPolygon | GeoJsonMultiPolygon;
+
+interface PlanningComparisonObject {
+  id: string;
+  name: string;
+  layerId: string;
+  layerName: string;
+  geometryType: string;
+  areaSquareMeters: number;
+}
+
+interface PlanningComparisonSelection {
+  id: string;
+  name: string;
+  layerName: string;
+  geometryType: string;
+}
+
+interface PlanningComparisonResult {
+  first: PlanningComparisonObject;
+  second: PlanningComparisonObject;
+  overlapSquareMeters: number;
+  onlyFirstSquareMeters: number;
+  onlySecondSquareMeters: number;
+  overlapFirstPercent: number;
+  overlapSecondPercent: number;
+  summary: string;
+  analysis: {
+    scaleComparison: string;
+    firstAdvantages: string[];
+    secondAdvantages: string[];
+    assessment: string;
+    recommendation: string;
+  };
+}
+
 const geoJsonFormat = new GeoJSON();
+
+const PLANNING_COMPARISON_LAYER_IDS = new Set([
+  'layer-active-investment-projects',
+  'layer-land-use-planning',
+  'layer-construction-planning',
+  'layer-zoning-planning',
+]);
 
 function readGeoJsonFeatures(data: object) {
   return geoJsonFormat.readFeatures(data, {
@@ -296,7 +347,7 @@ const plannedPlanningStyle = new Style({
   fill: new Fill({ color: 'rgba(167, 139, 250, 0.24)' }),
 });
 
-function planningComparisonStyle(feature: FeatureLike) {
+function planningScenarioStyle(feature: FeatureLike) {
   return feature.get('scenario') === 'planned'
     ? plannedPlanningStyle
     : currentPlanningStyle;
@@ -403,6 +454,31 @@ const selectedEditableStyle = new Style({
   }),
 });
 
+const planningComparisonStyles = {
+  first: new Style({
+    zIndex: 40,
+    stroke: new Stroke({ color: '#2563eb', width: 4 }),
+    fill: new Fill({ color: 'rgba(37, 99, 235, 0.2)' }),
+  }),
+  second: new Style({
+    zIndex: 41,
+    stroke: new Stroke({ color: '#f97316', width: 4 }),
+    fill: new Fill({ color: 'rgba(249, 115, 22, 0.2)' }),
+  }),
+  overlap: new Style({
+    zIndex: 42,
+    stroke: new Stroke({ color: '#dc2626', width: 3, lineDash: [7, 4] }),
+    fill: new Fill({ color: 'rgba(220, 38, 38, 0.42)' }),
+  }),
+} as const;
+
+function planningComparisonOverlayStyle(feature: FeatureLike) {
+  const role = String(feature.get('comparisonRole') ?? '');
+  if (role === 'first') return planningComparisonStyles.first;
+  if (role === 'second') return planningComparisonStyles.second;
+  return planningComparisonStyles.overlap;
+}
+
 const riskStyleCache = new globalThis.Map<string, Style>();
 
 function riskStyle(feature: FeatureLike) {
@@ -445,7 +521,7 @@ function demoFeatureStyle(
   }
   if (layerId === 'layer-village-labels') return villageLabelStyle(feature);
   if (layerId === 'layer-land-use-planning') {
-    return planningComparisonStyle(feature);
+    return planningScenarioStyle(feature);
   }
   if (
     layerId === 'layer-landslide-risk' ||
@@ -501,6 +577,111 @@ function compareSavedFeatureHitPriority(
     savedFeatureGeometryArea(firstFeature) -
     savedFeatureGeometryArea(secondFeature)
   );
+}
+
+function formatComparisonArea(squareMeters: number) {
+  const hectares = squareMeters / 10_000;
+  if (hectares >= 1) {
+    return `${hectares.toLocaleString('vi-VN', {
+      maximumFractionDigits: 2,
+    })} ha`;
+  }
+  return `${squareMeters.toLocaleString('vi-VN', {
+    maximumFractionDigits: 0,
+  })} m²`;
+}
+
+function planningComparisonSummary(
+  firstArea: number,
+  secondArea: number,
+  overlapArea: number,
+) {
+  if (overlapArea <= 0) {
+    return 'Hai vùng không có diện tích giao nhau.';
+  }
+  const smallerArea = Math.min(firstArea, secondArea);
+  const smallerCoverage = smallerArea > 0 ? overlapArea / smallerArea : 0;
+  if (smallerCoverage >= 0.95) {
+    return 'Một vùng gần như nằm hoàn toàn trong vùng còn lại.';
+  }
+  if (smallerCoverage >= 0.7) {
+    return 'Hai vùng có mức độ chồng lấn cao.';
+  }
+  if (smallerCoverage >= 0.3) {
+    return 'Hai vùng chồng lấn một phần đáng kể.';
+  }
+  return 'Hai vùng chỉ chồng lấn một phần nhỏ.';
+}
+
+function buildPlanningComparisonAnalysis(
+  firstName: string,
+  secondName: string,
+  firstArea: number,
+  secondArea: number,
+  overlapArea: number,
+) {
+  const onlyFirstArea = Math.max(0, firstArea - overlapArea);
+  const onlySecondArea = Math.max(0, secondArea - overlapArea);
+  const firstExclusivePercent =
+    firstArea > 0 ? (onlyFirstArea / firstArea) * 100 : 0;
+  const secondExclusivePercent =
+    secondArea > 0 ? (onlySecondArea / secondArea) * 100 : 0;
+  const areaDifference = Math.abs(firstArea - secondArea);
+  const areaDifferencePercent =
+    firstArea > 0 ? (areaDifference / firstArea) * 100 : 0;
+  const smallerArea = Math.min(firstArea, secondArea);
+  const overlapOfSmaller =
+    smallerArea > 0 ? (overlapArea / smallerArea) * 100 : 0;
+  const isNearlyEqual =
+    Math.max(firstArea, secondArea) > 0 &&
+    areaDifference / Math.max(firstArea, secondArea) < 0.05;
+
+  const scaleComparison = isNearlyEqual
+    ? 'A và B có quy mô diện tích gần tương đương.'
+    : secondArea > firstArea
+      ? `B mở rộng thêm ${formatComparisonArea(areaDifference)}, tương đương ${areaDifferencePercent.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}% so với A.`
+      : `B thu hẹp ${formatComparisonArea(areaDifference)}, tương đương ${areaDifferencePercent.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}% so với A.`;
+
+  const firstAdvantages = [
+    firstArea >= secondArea
+      ? `A có phạm vi bao phủ lớn hơn hoặc bằng B (${formatComparisonArea(firstArea)}).`
+      : `A có phạm vi tập trung hơn B, ít hơn ${formatComparisonArea(areaDifference)}.`,
+    `A giữ ${formatComparisonArea(onlyFirstArea)} không gian riêng, chiếm ${firstExclusivePercent.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}% diện tích A.`,
+  ];
+  const secondAdvantages = [
+    secondArea >= firstArea
+      ? `B có phạm vi bao phủ lớn hơn hoặc bằng A (${formatComparisonArea(secondArea)}).`
+      : `B có phạm vi tập trung hơn A, ít hơn ${formatComparisonArea(areaDifference)}.`,
+    `B có ${formatComparisonArea(onlySecondArea)} không gian mới/riêng, chiếm ${secondExclusivePercent.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}% diện tích B.`,
+  ];
+
+  const assessment =
+    overlapArea <= 0
+      ? 'Hai phương án độc lập về không gian, không phát sinh vùng chồng lấn trực tiếp.'
+      : overlapOfSmaller >= 95
+        ? `Phạm vi nhỏ hơn gần như nằm trọn trong phạm vi lớn hơn (${overlapOfSmaller.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}%).`
+        : overlapOfSmaller >= 70
+          ? `Hai phương án duy trì phần lớn phạm vi chung (${overlapOfSmaller.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}% của vùng nhỏ hơn).`
+          : `Hai phương án có mức thay đổi ranh giới đáng kể; phần giao chiếm ${overlapOfSmaller.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}% vùng nhỏ hơn.`;
+
+  const recommendation =
+    overlapArea <= 0
+      ? 'Nên kiểm tra kết nối hạ tầng, mục đích sử dụng đất và tác động giữa hai khu vực tách biệt.'
+      : overlapOfSmaller >= 70
+        ? 'Nên ưu tiên rà soát chỉ tiêu và pháp lý tại phần giao; phần ngoài vùng giao là khu vực thay đổi chính.'
+        : 'Nên rà soát riêng phần chỉ thuộc A và phần chỉ thuộc B để xác định khu vực bị loại bỏ, bổ sung hoặc chuyển đổi.';
+
+  return {
+    scaleComparison,
+    firstAdvantages: firstAdvantages.map((text) =>
+      text.replace(/^A/, firstName || 'A'),
+    ),
+    secondAdvantages: secondAdvantages.map((text) =>
+      text.replace(/^B/, secondName || 'B'),
+    ),
+    assessment,
+    recommendation,
+  };
 }
 
 const editableGeometryLabels: Record<EditableGeometryKind, string> = {
@@ -596,12 +777,16 @@ interface MapClientProps {
   mapState: MapState;
   onObjectEditorOpen?: () => void;
   onObjectEditorClose?: () => void;
+  onPlanningComparisonOpen?: () => void;
+  onPlanningComparisonClose?: () => void;
 }
 
 export default function MapClient({
   mapState,
   onObjectEditorOpen,
   onObjectEditorClose,
+  onPlanningComparisonOpen,
+  onPlanningComparisonClose,
 }: MapClientProps) {
   const targetRef = React.useRef<HTMLDivElement>(null);
   const mapRef = React.useRef<OlMap | null>(null);
@@ -617,6 +802,7 @@ export default function MapClient({
   const layerRegistryRef = React.useRef(new globalThis.Map<string, VectorLayer>());
   const villageLayerRef = React.useRef<VectorLayer | null>(null);
   const editableSourceRef = React.useRef(new VectorSource());
+  const planningComparisonSourceRef = React.useRef(new VectorSource());
   const editableLayerRef = React.useRef<VectorLayer | null>(null);
   const selectInteractionRef = React.useRef<Select | null>(null);
   const activeDrawInteractionRef = React.useRef<Draw | null>(null);
@@ -626,6 +812,8 @@ export default function MapClient({
   const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
   const eventKeysRef = React.useRef<EventsKey[]>([]);
   const hasFitDemoDataRef = React.useRef(false);
+  const isPlanningComparisonModeRef = React.useRef(false);
+  const planningComparisonFeatureIdsRef = React.useRef<string[]>([]);
 
   const [mapReady, setMapReady] = React.useState(false);
   const [editorMode, setEditorMode] = React.useState<EditorMode>('view');
@@ -662,6 +850,16 @@ export default function MapClient({
   const [coordinateInputError, setCoordinateInputError] = React.useState<
     string | null
   >(null);
+  const [isPlanningComparisonMode, setIsPlanningComparisonMode] =
+    React.useState(false);
+  const [planningComparisonFeatureIds, setPlanningComparisonFeatureIds] =
+    React.useState<string[]>([]);
+  const [planningComparisonSelections, setPlanningComparisonSelections] =
+    React.useState<PlanningComparisonSelection[]>([]);
+  const [planningComparisonResult, setPlanningComparisonResult] =
+    React.useState<PlanningComparisonResult | null>(null);
+  const [planningComparisonError, setPlanningComparisonError] =
+    React.useState<string | null>(null);
 
   const clearSelectedFeatureState = React.useCallback(() => {
     setSelectedFeatureId(null);
@@ -733,6 +931,247 @@ export default function MapClient({
     });
     mapStateRef.current.setLayerFeatureCounts(counts);
   }, []);
+
+  const resetPlanningComparisonSelection = React.useCallback(() => {
+    planningComparisonFeatureIdsRef.current = [];
+    setPlanningComparisonFeatureIds([]);
+    setPlanningComparisonSelections([]);
+    setPlanningComparisonResult(null);
+    setPlanningComparisonError(null);
+    planningComparisonSourceRef.current.clear();
+  }, []);
+
+  const reportPlanningComparisonError = React.useCallback((message: string) => {
+    setPlanningComparisonError(message);
+    toast.error(message);
+  }, []);
+
+  const stopPlanningComparison = React.useCallback(() => {
+    isPlanningComparisonModeRef.current = false;
+    setIsPlanningComparisonMode(false);
+    resetPlanningComparisonSelection();
+    const viewport = mapRef.current?.getViewport();
+    if (viewport) viewport.style.cursor = '';
+    onPlanningComparisonClose?.();
+  }, [onPlanningComparisonClose, resetPlanningComparisonSelection]);
+
+  const startPlanningComparison = React.useCallback(() => {
+    activeDrawInteractionRef.current?.abortDrawing();
+    activeDrawInteractionRef.current = null;
+    setIsDrawing(false);
+    setEditorMode('view');
+    selectInteractionRef.current?.getFeatures().clear();
+    clearSelectedFeatureState();
+    objectPopupOverlayRef.current?.setPosition(undefined);
+    setSavedObjectPopup(null);
+    resetPlanningComparisonSelection();
+    onPlanningComparisonOpen?.();
+    isPlanningComparisonModeRef.current = true;
+    setIsPlanningComparisonMode(true);
+    const viewport = mapRef.current?.getViewport();
+    if (viewport) viewport.style.cursor = 'crosshair';
+    toast.info('Chọn đối tượng quy hoạch thứ nhất trên bản đồ.');
+  }, [
+    clearSelectedFeatureState,
+    onPlanningComparisonOpen,
+    resetPlanningComparisonSelection,
+  ]);
+
+  const selectPlanningFeatureForComparison = React.useCallback(
+    (feature: Feature) => {
+      const featureId = String(feature.getId() ?? '');
+      const layerId = String(feature.get('layerId') ?? '');
+      const geometryType = feature.getGeometry()?.getType() ?? '';
+      if (!featureId) {
+        reportPlanningComparisonError(
+          'Đối tượng chưa có mã định danh để so sánh.',
+        );
+        return;
+      }
+
+      const selectedIds = planningComparisonFeatureIdsRef.current;
+      if (selectedIds.includes(featureId)) {
+        reportPlanningComparisonError(
+          'Không thể so sánh một đối tượng với chính nó.',
+        );
+        return;
+      }
+      if (selectedIds.length >= 2) {
+        toast.info('Hãy bấm Chọn lại để thực hiện phép so sánh mới.');
+        return;
+      }
+
+      if (selectedIds.length === 0) {
+        setPlanningComparisonError(null);
+        const firstClone = feature.clone();
+        firstClone.setId(`planning-comparison-first-${featureId}`);
+        firstClone.set('comparisonRole', 'first');
+        planningComparisonSourceRef.current.clear();
+        planningComparisonSourceRef.current.addFeature(firstClone);
+        planningComparisonFeatureIdsRef.current = [featureId];
+        setPlanningComparisonFeatureIds([featureId]);
+        setPlanningComparisonSelections([
+          {
+            id: featureId,
+            name: String(feature.get('name') ?? 'Đối tượng thứ nhất'),
+            layerName:
+              MAP_LAYER_BY_ID.get(layerId)?.name ?? 'Lớp quy hoạch',
+            geometryType,
+          },
+        ]);
+        toast.info('Đã chọn đối tượng thứ nhất. Hãy chọn đối tượng thứ hai.');
+        return;
+      }
+
+      const firstFeature = editableSourceRef.current.getFeatureById(
+        selectedIds[0],
+      );
+      if (!firstFeature) {
+        resetPlanningComparisonSelection();
+        reportPlanningComparisonError(
+          'Không còn tìm thấy đối tượng thứ nhất. Hãy chọn lại.',
+        );
+        return;
+      }
+
+      const firstLayerId = String(firstFeature.get('layerId') ?? '');
+      const firstGeometryType = firstFeature.getGeometry()?.getType() ?? '';
+      if (firstLayerId !== layerId) {
+        reportPlanningComparisonError(
+          'Hai đối tượng khác lớp. Chỉ được so sánh hai đối tượng cùng lớp quy hoạch.',
+        );
+        return;
+      }
+      if (firstGeometryType !== geometryType) {
+        reportPlanningComparisonError(
+          `Hai đối tượng không cùng kiểu hình học (${firstGeometryType} và ${geometryType}).`,
+        );
+        return;
+      }
+      if (geometryType !== 'Polygon' && geometryType !== 'MultiPolygon') {
+        reportPlanningComparisonError(
+          'Phân tích quy hoạch hiện chỉ hỗ trợ đối tượng vùng Polygon hoặc MultiPolygon.',
+        );
+        return;
+      }
+
+      const firstGeoJson = geoJsonFormat.writeFeatureObject(firstFeature, {
+        dataProjection: 'EPSG:4326',
+        featureProjection: 'EPSG:3857',
+        decimals: 7,
+      }) as GeoJsonFeature<PlanningPolygonGeometry>;
+      const secondGeoJson = geoJsonFormat.writeFeatureObject(feature, {
+        dataProjection: 'EPSG:4326',
+        featureProjection: 'EPSG:3857',
+        decimals: 7,
+      }) as GeoJsonFeature<PlanningPolygonGeometry>;
+      const collection: GeoJsonFeatureCollection<PlanningPolygonGeometry> = {
+        type: 'FeatureCollection',
+        features: [firstGeoJson, secondGeoJson],
+      };
+
+      try {
+        const firstArea = turfArea(firstGeoJson);
+        const secondArea = turfArea(secondGeoJson);
+        const overlapFeature = intersect(collection, {
+          properties: { comparisonRole: 'overlap' },
+        });
+        const overlapArea = overlapFeature ? turfArea(overlapFeature) : 0;
+        const layerName =
+          MAP_LAYER_BY_ID.get(layerId)?.name ?? 'Lớp quy hoạch';
+        const firstObject: PlanningComparisonObject = {
+          id: selectedIds[0],
+          name: String(firstFeature.get('name') ?? 'Đối tượng thứ nhất'),
+          layerId,
+          layerName,
+          geometryType,
+          areaSquareMeters: firstArea,
+        };
+        const secondObject: PlanningComparisonObject = {
+          id: featureId,
+          name: String(feature.get('name') ?? 'Đối tượng thứ hai'),
+          layerId,
+          layerName,
+          geometryType,
+          areaSquareMeters: secondArea,
+        };
+        setPlanningComparisonError(null);
+
+        const secondClone = feature.clone();
+        secondClone.setId(`planning-comparison-second-${featureId}`);
+        secondClone.set('comparisonRole', 'second');
+        planningComparisonSourceRef.current.addFeature(secondClone);
+        if (overlapFeature) {
+          const overlapOlFeature = readGeoJsonFeatures(overlapFeature)[0];
+          if (overlapOlFeature) {
+            overlapOlFeature.setId('planning-comparison-overlap');
+            overlapOlFeature.set('comparisonRole', 'overlap');
+            planningComparisonSourceRef.current.addFeature(overlapOlFeature);
+          }
+        }
+
+        planningComparisonFeatureIdsRef.current = [
+          selectedIds[0],
+          featureId,
+        ];
+        setPlanningComparisonFeatureIds([selectedIds[0], featureId]);
+        setPlanningComparisonSelections([
+          {
+            id: firstObject.id,
+            name: firstObject.name,
+            layerName: firstObject.layerName,
+            geometryType: firstObject.geometryType,
+          },
+          {
+            id: secondObject.id,
+            name: secondObject.name,
+            layerName: secondObject.layerName,
+            geometryType: secondObject.geometryType,
+          },
+        ]);
+        setPlanningComparisonResult({
+          first: firstObject,
+          second: secondObject,
+          overlapSquareMeters: overlapArea,
+          onlyFirstSquareMeters: Math.max(0, firstArea - overlapArea),
+          onlySecondSquareMeters: Math.max(0, secondArea - overlapArea),
+          overlapFirstPercent:
+            firstArea > 0 ? (overlapArea / firstArea) * 100 : 0,
+          overlapSecondPercent:
+            secondArea > 0 ? (overlapArea / secondArea) * 100 : 0,
+          summary: planningComparisonSummary(
+            firstArea,
+            secondArea,
+            overlapArea,
+          ),
+          analysis: buildPlanningComparisonAnalysis(
+            firstObject.name,
+            secondObject.name,
+            firstArea,
+            secondArea,
+            overlapArea,
+          ),
+        });
+
+        const comparisonExtent =
+          planningComparisonSourceRef.current.getExtent();
+        if (comparisonExtent && comparisonExtent.every(Number.isFinite)) {
+          mapRef.current?.getView().fit(comparisonExtent, {
+            padding: [100, 100, 220, 100],
+            duration: 450,
+            maxZoom: 17,
+          });
+        }
+        toast.success('Đã hoàn thành phân tích hai vùng quy hoạch.');
+      } catch (error) {
+        console.error('Không thể phân tích hai vùng quy hoạch', error);
+        reportPlanningComparisonError(
+          'Không thể phân tích hình học của hai đối tượng. Hãy kiểm tra lại các đỉnh vùng.',
+        );
+      }
+    },
+    [reportPlanningComparisonError, resetPlanningComparisonSelection],
+  );
 
   const closeSavedObjectPopup = React.useCallback(() => {
     objectPopupOverlayRef.current?.setPosition(undefined);
@@ -894,6 +1333,12 @@ export default function MapClient({
       renderBuffer: 64,
       zIndex: 100,
     });
+    const planningComparisonLayer = new VectorLayer({
+      source: planningComparisonSourceRef.current,
+      style: planningComparisonOverlayStyle,
+      renderBuffer: 64,
+      zIndex: 110,
+    });
     editableLayerRef.current = editableLayer;
     villageLayerRef.current = editableLayer;
     const emptyCatalogLayers: Array<[string, VectorLayer]> = INITIAL_MAP_LAYERS
@@ -931,6 +1376,7 @@ export default function MapClient({
         ...registeredLayers.map(([, layer]) => layer),
         sovereigntyLayer,
         editableLayer,
+        planningComparisonLayer,
       ],
       view: new View({
         center: fromLonLat([LAOBAO_CENTER.lng, LAOBAO_CENTER.lat]),
@@ -1061,7 +1507,7 @@ export default function MapClient({
     eventKeysRef.current.push(selectionKey);
 
     const clickKey = map.on('singleclick', (event) => {
-      const savedEditableFeature = map
+      const savedEditableFeatures = map
         .getFeaturesAtPixel(event.pixel, {
           hitTolerance: 8,
           layerFilter: (layer) => layer === editableLayer,
@@ -1071,7 +1517,38 @@ export default function MapClient({
             feature instanceof Feature &&
             feature.get('status') === 'saved',
         )
-        .sort(compareSavedFeatureHitPriority)[0];
+        .sort(compareSavedFeatureHitPriority);
+
+      if (isPlanningComparisonModeRef.current) {
+        closeSavedObjectPopup();
+        selectInteractionRef.current?.getFeatures().clear();
+        clearSelectedFeatureState();
+        const clickedFeature = savedEditableFeatures[0];
+        if (!clickedFeature) {
+          reportPlanningComparisonError(
+            'Không tìm thấy đối tượng tại vị trí đã chọn.',
+          );
+          return;
+        }
+        if (
+          !PLANNING_COMPARISON_LAYER_IDS.has(
+            String(clickedFeature.get('layerId') ?? ''),
+          )
+        ) {
+          const clickedLayerName =
+            MAP_LAYER_BY_ID.get(
+              String(clickedFeature.get('layerId') ?? ''),
+            )?.name ?? 'không xác định';
+          reportPlanningComparisonError(
+            `Lớp “${clickedLayerName}” không thuộc bốn lớp được hỗ trợ so sánh quy hoạch.`,
+          );
+          return;
+        }
+        selectPlanningFeatureForComparison(clickedFeature);
+        return;
+      }
+
+      const savedEditableFeature = savedEditableFeatures[0];
       if (savedEditableFeature) {
         if (savedEditableFeature.get('layerId') === 'layer-villages') {
           const code = savedEditableFeature.get('villageCode');
@@ -1149,6 +1626,8 @@ export default function MapClient({
     onObjectEditorOpen,
     openSavedObjectPopup,
     refreshEditableFeatureStats,
+    reportPlanningComparisonError,
+    selectPlanningFeatureForComparison,
   ]);
 
   React.useEffect(() => {
@@ -1535,6 +2014,13 @@ export default function MapClient({
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
 
+      if (isPlanningComparisonModeRef.current) {
+        event.preventDefault();
+        stopPlanningComparison();
+        toast.info('Đã đóng chế độ so sánh quy hoạch.');
+        return;
+      }
+
       if (
         editorMode === 'point' ||
         editorMode === 'line' ||
@@ -1557,7 +2043,7 @@ export default function MapClient({
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [editorMode]);
+  }, [editorMode, stopPlanningComparison]);
 
   function handleEditorModeChange(nextMode: EditorMode) {
     if (nextMode === 'modify' && !selectedFeatureId) {
@@ -1852,35 +2338,31 @@ export default function MapClient({
     }
   }
 
-  async function clearEditableFeatures() {
+  function clearDraftFeatures() {
     activeDrawInteractionRef.current?.abortDrawing();
     setEditorMode('view');
     setIsDrawing(false);
-    setIsPersisting(true);
-    try {
-      const { deletedCount } = await deleteUserDemoGisFeatures();
-      editableSourceRef.current
-        .getFeatures()
-        .filter((feature) => feature.get('source') === 'user')
-        .forEach((feature) =>
-          editableSourceRef.current.removeFeature(feature),
-        );
-      refreshLayerFeatureCounts();
+    const source = editableSourceRef.current;
+    const draftFeatures = source
+      .getFeatures()
+      .filter((feature) => feature.get('status') !== 'saved');
+    if (draftFeatures.length === 0) return;
+
+    const selectedFeature =
+      selectInteractionRef.current?.getFeatures().item(0);
+    const isSelectedFeatureDraft =
+      selectedFeature !== undefined &&
+      draftFeatures.includes(selectedFeature);
+    draftFeatures.forEach((feature) => source.removeFeature(feature));
+
+    if (isSelectedFeatureDraft) {
       selectInteractionRef.current?.getFeatures().clear();
       clearSelectedFeatureState();
       closeSavedObjectPopup();
       onObjectEditorClose?.();
-      toast.success(
-        deletedCount > 0
-          ? `Đã xóa ${deletedCount} đối tượng POC dùng chung.`
-          : 'Đã xóa các bản nháp POC trên bản đồ.',
-      );
-    } catch (error) {
-      console.error('Không thể xóa dữ liệu POC dùng chung', error);
-      toast.error('Không thể xóa toàn bộ đối tượng POC.');
-    } finally {
-      setIsPersisting(false);
     }
+    refreshEditableFeatureStats();
+    toast.success(`Đã xóa ${draftFeatures.length} bản nháp POC.`);
   }
 
   function exportEditableGeoJson() {
@@ -1934,7 +2416,6 @@ export default function MapClient({
       return canViewLayer ? [layer] : [];
     }),
   })).filter((group) => group.layers.length > 0);
-
   return (
     <div className="relative h-full min-h-[520px] w-full overflow-hidden bg-slate-100 dark:bg-slate-950">
       <div ref={targetRef} className="h-full min-h-[520px] w-full" aria-label="Bản đồ GIS OpenLayers" />
@@ -2019,7 +2500,12 @@ export default function MapClient({
         )}
       </div>
 
-      <div className="absolute bottom-2 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm">
+      <div
+        className={cn(
+          'absolute bottom-2 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm',
+          isPlanningComparisonMode && 'hidden',
+        )}
+      >
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <p className="text-xs font-bold text-foreground">Biên tập đối tượng (POC)</p>
@@ -2079,8 +2565,8 @@ export default function MapClient({
             type="button"
             size="xs"
             variant="outline"
-            onClick={clearEditableFeatures}
-            disabled={editableFeatureCount === 0 || isPersisting}
+            onClick={clearDraftFeatures}
+            disabled={draftFeatureCount === 0 || isPersisting}
             className="h-7 gap-1 px-2 text-[10px] shadow-none"
             title="Xóa toàn bộ bản nháp"
           >
@@ -2096,6 +2582,17 @@ export default function MapClient({
             title="Xuất GeoJSON"
           >
             <Download className="size-3" />
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={startPlanningComparison}
+            className="h-7 gap-1 px-2 text-[10px] shadow-none"
+            title="So sánh hai đối tượng quy hoạch"
+          >
+            <GitCompareArrows className="size-3" />
+            <span className="hidden sm:inline">So sánh QH</span>
           </Button>
         </div>
 
@@ -2349,6 +2846,279 @@ export default function MapClient({
         )}
 
       </div>
+
+      {isPlanningComparisonMode && (
+        <div className="absolute bottom-2 left-2.5 z-20 max-h-[calc(100%-6rem)] w-[min(32rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/97 p-3 shadow-xl backdrop-blur-md">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="flex items-center gap-1.5 text-sm font-bold text-foreground">
+                <GitCompareArrows className="size-4 text-primary" />
+                So sánh quy hoạch
+              </p>
+              <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                Phân tích hình học demo. Chỉ hỗ trợ hai object cùng lớp và cùng
+                kiểu.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              onClick={stopPlanningComparison}
+              aria-label="Đóng so sánh quy hoạch"
+              title="Đóng (Esc)"
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+
+          <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2.5 py-2 text-[11px] leading-5">
+            {planningComparisonFeatureIds.length === 0
+              ? 'Chọn vùng quy hoạch thứ nhất trên bản đồ.'
+              : planningComparisonFeatureIds.length === 1
+                ? 'Đã chọn vùng thứ nhất. Chọn tiếp vùng thứ hai cùng lớp.'
+                : 'Phân tích hoàn tất. Có thể xem kết quả hoặc chọn lại.'}
+          </div>
+
+          {planningComparisonError && (
+            <div
+              role="alert"
+              className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-[10px] font-medium leading-5 text-destructive"
+            >
+              {planningComparisonError}
+            </div>
+          )}
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {[0, 1].map((index) => {
+              const selection = planningComparisonSelections[index];
+              const isFirst = index === 0;
+              return (
+                <div
+                  key={isFirst ? 'first' : 'second'}
+                  className={cn(
+                    'min-h-16 rounded-lg border p-2',
+                    isFirst
+                      ? 'border-blue-500/40 bg-blue-500/8'
+                      : 'border-orange-500/40 bg-orange-500/8',
+                  )}
+                >
+                  <p
+                    className={cn(
+                      'text-[10px] font-bold uppercase',
+                      isFirst ? 'text-blue-600' : 'text-orange-600',
+                    )}
+                  >
+                    {isFirst ? 'Đối tượng A' : 'Đối tượng B'}
+                  </p>
+                  {selection ? (
+                    <>
+                      <p className="mt-1 truncate text-[11px] font-semibold">
+                        {selection.name}
+                      </p>
+                      <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                        {selection.layerName} · {selection.geometryType}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-[10px] text-muted-foreground">
+                      Chưa chọn
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {planningComparisonResult && (
+            <div className="mt-2 rounded-lg border border-border bg-background/75 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-bold">
+                  Kết quả phân tích không gian
+                </p>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                  {planningComparisonResult.first.layerName}
+                </span>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-[10px]">
+                <div>
+                  <p className="text-muted-foreground">Diện tích A</p>
+                  <p className="font-semibold text-blue-600">
+                    {formatComparisonArea(
+                      planningComparisonResult.first.areaSquareMeters,
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Diện tích B</p>
+                  <p className="font-semibold text-orange-600">
+                    {formatComparisonArea(
+                      planningComparisonResult.second.areaSquareMeters,
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Phần giao nhau</p>
+                  <p className="font-semibold text-red-600">
+                    {formatComparisonArea(
+                      planningComparisonResult.overlapSquareMeters,
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Chênh lệch diện tích</p>
+                  <p className="font-semibold">
+                    {formatComparisonArea(
+                      Math.abs(
+                        planningComparisonResult.first.areaSquareMeters -
+                          planningComparisonResult.second.areaSquareMeters,
+                      ),
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Chỉ thuộc A</p>
+                  <p className="font-semibold">
+                    {formatComparisonArea(
+                      planningComparisonResult.onlyFirstSquareMeters,
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Chỉ thuộc B</p>
+                  <p className="font-semibold">
+                    {formatComparisonArea(
+                      planningComparisonResult.onlySecondSquareMeters,
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-2 rounded-md bg-muted/50 px-2 py-1.5 text-[10px]">
+                <span>
+                  Giao/A:{' '}
+                  <strong>
+                    {planningComparisonResult.overlapFirstPercent.toLocaleString(
+                      'vi-VN',
+                      { maximumFractionDigits: 1 },
+                    )}
+                    %
+                  </strong>
+                </span>
+                <span>
+                  Giao/B:{' '}
+                  <strong>
+                    {planningComparisonResult.overlapSecondPercent.toLocaleString(
+                      'vi-VN',
+                      { maximumFractionDigits: 1 },
+                    )}
+                    %
+                  </strong>
+                </span>
+              </div>
+
+              <p className="mt-2 border-l-2 border-primary pl-2 text-[10px] leading-5 text-foreground">
+                {planningComparisonResult.summary}
+              </p>
+
+              <div className="mt-2.5 border-t border-border/60 pt-2.5">
+                <p className="text-[11px] font-bold text-foreground">
+                  Phân tích demo
+                </p>
+                <p className="mt-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-[10px] font-medium leading-5">
+                  {planningComparisonResult.analysis.scaleComparison}
+                </p>
+
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-md border border-blue-500/25 bg-blue-500/5 p-2">
+                    <p className="text-[10px] font-bold text-blue-600">
+                      Lợi thế không gian của A
+                    </p>
+                    <ul className="mt-1 space-y-1 text-[10px] leading-5 text-foreground">
+                      {planningComparisonResult.analysis.firstAdvantages.map(
+                        (advantage) => (
+                          <li key={advantage} className="flex gap-1.5">
+                            <span className="text-blue-600">•</span>
+                            <span>{advantage}</span>
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+                  <div className="rounded-md border border-orange-500/25 bg-orange-500/5 p-2">
+                    <p className="text-[10px] font-bold text-orange-600">
+                      Lợi thế không gian của B
+                    </p>
+                    <ul className="mt-1 space-y-1 text-[10px] leading-5 text-foreground">
+                      {planningComparisonResult.analysis.secondAdvantages.map(
+                        (advantage) => (
+                          <li key={advantage} className="flex gap-1.5">
+                            <span className="text-orange-600">•</span>
+                            <span>{advantage}</span>
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="mt-2 space-y-1.5 text-[10px] leading-5">
+                  <p>
+                    <strong>Nhận định:</strong>{' '}
+                    {planningComparisonResult.analysis.assessment}
+                  </p>
+                  <p>
+                    <strong>Gợi ý rà soát:</strong>{' '}
+                    {planningComparisonResult.analysis.recommendation}
+                  </p>
+                </div>
+                <p className="mt-2 text-[9px] italic leading-4 text-muted-foreground">
+                  Nội dung được sinh bằng quy tắc hình học để minh họa giao
+                  diện, không phải kết luận chuyên môn hoặc pháp lý.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <i className="size-2 rounded-sm bg-blue-600" /> A
+              </span>
+              <span className="flex items-center gap-1">
+                <i className="size-2 rounded-sm bg-orange-500" /> B
+              </span>
+              <span className="flex items-center gap-1">
+                <i className="size-2 rounded-sm bg-red-600" /> Phần giao
+              </span>
+            </div>
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  resetPlanningComparisonSelection();
+                  toast.info('Đã xóa lựa chọn. Chọn lại đối tượng thứ nhất.');
+                }}
+                disabled={planningComparisonFeatureIds.length === 0}
+                className="h-7 px-2 text-[10px]"
+              >
+                Chọn lại
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                onClick={stopPlanningComparison}
+                className="h-7 px-2 text-[10px]"
+              >
+                Hoàn tất
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .ol-zoom {

@@ -23,10 +23,13 @@ import type {
 } from '@/types/demo-gis';
 
 const SEED_TIMESTAMP = '2026-07-29T00:00:00.000Z';
-export const DEMO_GIS_SEED_VERSION = 3;
+export const DEMO_GIS_SEED_VERSION = 4;
 export const DEMO_GIS_RETIRED_SEED_IDS = [
   'demo-layer-households',
   'demo-layer-working-age-population',
+  'demo-layer-active-investment-projects',
+  'demo-layer-construction-planning',
+  'demo-layer-zoning-planning',
   ...VILLAGES.flatMap((village) =>
     [1, 2, 3].map((index) => `household-${village.code}-${index}`),
   ),
@@ -516,6 +519,153 @@ const planningFeatures = [
   ];
 });
 
+const planningComparisonDemoFeatures = [
+  createSeedFeature(
+    'investment-project-demo-a',
+    'layer-active-investment-projects',
+    {
+      type: 'Polygon',
+      coordinates: [[
+        [106.6015, 16.615],
+        [106.607, 16.615],
+        [106.607, 16.619],
+        [106.6015, 16.619],
+        [106.6015, 16.615],
+      ]],
+    },
+    {
+      name: 'Dự án đầu tư khu dịch vụ A',
+      description: 'Phạm vi dự án đầu tư đang triển khai dùng cho demo so sánh.',
+      details: {
+        'Mã dự án': 'DA-LB-01',
+        'Giai đoạn': 'Đang triển khai',
+        'Nguồn': 'Dữ liệu mô phỏng POC',
+      },
+      extra: { mockGenerated: true, comparisonDemo: true },
+    },
+  ),
+  createSeedFeature(
+    'investment-project-demo-b',
+    'layer-active-investment-projects',
+    {
+      type: 'Polygon',
+      coordinates: [[
+        [106.604, 16.6165],
+        [106.6095, 16.6165],
+        [106.6095, 16.6205],
+        [106.604, 16.6205],
+        [106.604, 16.6165],
+      ]],
+    },
+    {
+      name: 'Dự án đầu tư khu dịch vụ B',
+      description: 'Phạm vi dự án đầu tư đề xuất dùng cho demo so sánh.',
+      details: {
+        'Mã dự án': 'DA-LB-02',
+        'Giai đoạn': 'Đề xuất điều chỉnh',
+        'Nguồn': 'Dữ liệu mô phỏng POC',
+      },
+      extra: { mockGenerated: true, comparisonDemo: true },
+    },
+  ),
+  createSeedFeature(
+    'construction-planning-demo-a',
+    'layer-construction-planning',
+    {
+      type: 'Polygon',
+      coordinates: [[
+        [106.5935, 16.6165],
+        [106.599, 16.6165],
+        [106.599, 16.621],
+        [106.5935, 16.621],
+        [106.5935, 16.6165],
+      ]],
+    },
+    {
+      name: 'Quy hoạch xây dựng khu trung tâm A',
+      description: 'Phạm vi quy hoạch xây dựng hiện tại dùng cho demo so sánh.',
+      details: {
+        'Mã đồ án': 'QHXD-LB-01',
+        'Phiên bản': 'Hiện tại',
+        'Nguồn': 'Dữ liệu mô phỏng POC',
+      },
+      extra: { mockGenerated: true, comparisonDemo: true },
+    },
+  ),
+  createSeedFeature(
+    'construction-planning-demo-b',
+    'layer-construction-planning',
+    {
+      type: 'Polygon',
+      coordinates: [[
+        [106.596, 16.618],
+        [106.6015, 16.618],
+        [106.6015, 16.6225],
+        [106.596, 16.6225],
+        [106.596, 16.618],
+      ]],
+    },
+    {
+      name: 'Quy hoạch xây dựng khu trung tâm B',
+      description: 'Phạm vi quy hoạch xây dựng điều chỉnh dùng cho demo so sánh.',
+      details: {
+        'Mã đồ án': 'QHXD-LB-02',
+        'Phiên bản': 'Điều chỉnh',
+        'Nguồn': 'Dữ liệu mô phỏng POC',
+      },
+      extra: { mockGenerated: true, comparisonDemo: true },
+    },
+  ),
+  createSeedFeature(
+    'zoning-planning-demo-a',
+    'layer-zoning-planning',
+    {
+      type: 'Polygon',
+      coordinates: [[
+        [106.587, 16.6075],
+        [106.5925, 16.6075],
+        [106.5925, 16.612],
+        [106.587, 16.612],
+        [106.587, 16.6075],
+      ]],
+    },
+    {
+      name: 'Quy hoạch phân khu phía Tây A',
+      description: 'Ranh giới phân khu hiện tại dùng cho demo so sánh.',
+      details: {
+        'Mã phân khu': 'PK-LB-01',
+        'Phiên bản': 'Hiện tại',
+        'Nguồn': 'Dữ liệu mô phỏng POC',
+      },
+      extra: { mockGenerated: true, comparisonDemo: true },
+    },
+  ),
+  createSeedFeature(
+    'zoning-planning-demo-b',
+    'layer-zoning-planning',
+    {
+      type: 'Polygon',
+      coordinates: [[
+        [106.5895, 16.609],
+        [106.595, 16.609],
+        [106.595, 16.6135],
+        [106.5895, 16.6135],
+        [106.5895, 16.609],
+      ]],
+    },
+    {
+      name: 'Quy hoạch phân khu phía Tây B',
+      description: 'Ranh giới phân khu điều chỉnh dùng cho demo so sánh.',
+      details: {
+        'Mã phân khu': 'PK-LB-02',
+        'Phiên bản': 'Điều chỉnh',
+        'Nguồn': 'Dữ liệu mô phỏng POC',
+      },
+      extra: { mockGenerated: true, comparisonDemo: true },
+    },
+  ),
+];
+
 const baseSeedFeatures = [
   ...communeFeatures,
   ...villageBoundaryFeatures,
@@ -526,6 +676,7 @@ const baseSeedFeatures = [
   ...facilityFeatures,
   ...disasterFeatures,
   ...planningFeatures,
+  ...planningComparisonDemoFeatures,
 ];
 
 const demoAnchorVillages = VILLAGES.filter(

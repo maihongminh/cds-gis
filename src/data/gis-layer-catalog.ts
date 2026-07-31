@@ -323,7 +323,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     'Dự án đầu tư đang triển khai',
     'land_planning_construction',
     'polygon',
-    { color: '#7c3aed', fillColor: '#c4b5fd' },
+    { color: '#7c3aed', fillColor: '#c4b5fd', featureCount: 2 },
   ),
   defineLayer(
     'layer-land-use-planning',
@@ -343,14 +343,14 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     'Quy hoạch xây dựng',
     'land_planning_construction',
     'polygon',
-    { color: '#d97706', fillColor: '#fcd34d' },
+    { color: '#d97706', fillColor: '#fcd34d', featureCount: 2 },
   ),
   defineLayer(
     'layer-zoning-planning',
     'Quy hoạch phân khu',
     'land_planning_construction',
     'polygon',
-    { color: '#9333ea', fillColor: '#d8b4fe' },
+    { color: '#9333ea', fillColor: '#d8b4fe', featureCount: 2 },
   ),
   defineLayer(
     'layer-urban-development-areas',
