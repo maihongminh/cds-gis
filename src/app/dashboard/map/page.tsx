@@ -213,7 +213,7 @@ export default function MapPage() {
   const [activeBaseLayerId, setActiveBaseLayerId] = React.useState(DEFAULT_BASE_LAYER_ID);
   // ── UI state ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [isLayerPanelOpen, setIsLayerPanelOpen] = React.useState(false);
+  const [isLayerPanelOpen, setIsLayerPanelOpen] = React.useState(true);
   const [isLegendCollapsed, setIsLegendCollapsed] = React.useState(false);
   const [isAlertCollapsed, setIsAlertCollapsed] = React.useState(true);
   const restoreLayerPanelAfterEditRef = React.useRef(false);

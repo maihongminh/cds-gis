@@ -3,6 +3,7 @@ import type { MapMarkerIconName } from '@/lib/map-style-config';
 import { MOCK_VILLAGE_BOUNDARIES } from './mock-laobao-boundary';
 import { MOCK_DISASTER_RISK_ZONES } from './mock-map-disaster-risks';
 import { MOCK_PUBLIC_FACILITIES } from './mock-map-public-facilities';
+import { TAY_CHIN_COMMUNITY_PLACES } from './mock-tay-chin-community';
 import { MOCK_TOURISM_POIS } from './mock-map-tourism-pois';
 
 export type MapDataGroup = GisLayerGroup['id'];
@@ -101,6 +102,10 @@ const countRiskType = (...types: string[]) =>
   MOCK_DISASTER_RISK_ZONES.filter((feature) =>
     types.includes(feature.riskType),
   ).length;
+const countTayChinLayer = (layerId: string) =>
+  TAY_CHIN_COMMUNITY_PLACES.filter(
+    (feature) => feature.layerId === layerId,
+  ).length;
 
 export const INITIAL_MAP_LAYERS: MapLayer[] = [
   defineLayer(
@@ -155,9 +160,9 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
       color: '#2563eb',
       icon: 'House',
       markerIcon: 'home',
-      source: 'Dữ liệu mô phỏng POC',
+      source: 'Dữ liệu dân cư mô phỏng; vị trí từ OpenStreetMap',
       updateFrequency: 'Theo đợt rà soát',
-      featureCount: 36,
+      featureCount: 100,
     },
   ),
   defineLayer(
@@ -175,7 +180,7 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     {
       color: '#0891b2',
       fillColor: '#67e8f9',
-      source: 'Tổng hợp từ cụm hộ dân mô phỏng',
+      source: 'Tổng hợp từ 100 hộ dân mô phỏng tại Tây Chín',
       updateFrequency: 'Theo đợt rà soát',
       featureCount: 6,
     },
@@ -289,7 +294,13 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     'Khách sạn, nhà nghỉ, cơ sở lưu trú',
     'tourism_trade_services',
     'point',
-    { color: '#4f46e5', icon: 'Building' },
+    {
+      color: '#4f46e5',
+      icon: 'Building',
+      markerIcon: 'building',
+      source: 'OpenStreetMap; dữ liệu nghiệp vụ mô phỏng',
+      featureCount: countTayChinLayer('layer-accommodations'),
+    },
   ),
 
   defineLayer(
@@ -393,7 +404,8 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
     icon: 'GraduationCap',
     markerIcon: 'school',
     source: 'Phòng Giáo dục - Đào tạo',
-    featureCount: countFacilityType('school'),
+    featureCount:
+      countFacilityType('school') + countTayChinLayer('layer-schools'),
   }),
   defineLayer(
     'layer-health-facilities',
@@ -405,7 +417,9 @@ export const INITIAL_MAP_LAYERS: MapLayer[] = [
       icon: 'HeartPulse',
       markerIcon: 'medical',
       source: 'Trạm Y tế xã Lao Bảo',
-      featureCount: countFacilityType('health_station'),
+      featureCount:
+        countFacilityType('health_station') +
+        countTayChinLayer('layer-health-facilities'),
     },
   ),
   defineLayer(

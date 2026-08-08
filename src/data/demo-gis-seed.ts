@@ -11,6 +11,10 @@ import {
 } from './mock-map-scenarios';
 import { MOCK_TOURISM_POIS } from './mock-map-tourism-pois';
 import {
+  TAY_CHIN_COMMUNITY_PLACES,
+  TAY_CHIN_HOUSEHOLD_LOCATIONS,
+} from './mock-tay-chin-community';
+import {
   INITIAL_MAP_LAYERS,
   MAP_LAYER_BY_ID,
   type MapLayer,
@@ -23,7 +27,7 @@ import type {
 } from '@/types/demo-gis';
 
 const SEED_TIMESTAMP = '2026-07-29T00:00:00.000Z';
-export const DEMO_GIS_SEED_VERSION = 4;
+export const DEMO_GIS_SEED_VERSION = 6;
 export const DEMO_GIS_RETIRED_SEED_IDS = [
   'demo-layer-households',
   'demo-layer-working-age-population',
@@ -34,6 +38,20 @@ export const DEMO_GIS_RETIRED_SEED_IDS = [
     [1, 2, 3].map((index) => `household-${village.code}-${index}`),
   ),
   ...VILLAGES.map((village) => `working-age-zone-${village.code}`),
+  ...Array.from(
+    { length: 36 },
+    (_, index) => `household-building-${String(index + 1).padStart(3, '0')}`,
+  ),
+  ...Array.from(
+    { length: 6 },
+    (_, index) => `working-age-cluster-central-${index + 1}`,
+  ),
+  'demo-layer-active-enterprises',
+  'demo-layer-business-households',
+  'demo-layer-service-logistics',
+  'demo-layer-production-business-facilities',
+  'demo-layer-restaurants',
+  'demo-layer-accommodations',
 ] as const;
 
 const tourismLayerIds = {
@@ -198,89 +216,94 @@ interface ResidentialCluster {
   id: string;
   name: string;
   areaDescription: string;
-  buildingCenters: Array<[number, number]>;
+  roadName: string;
 }
 
-const residentialClusters: ResidentialCluster[] = [
-  {
-    id: 'central-1',
-    name: 'Cụm dân cư trung tâm 1',
-    areaDescription: 'Khu Lê Thế Tiết - Thạch Hãn',
-    buildingCenters: [
-      [106.5870917, 16.6111822],
-      [106.586456, 16.6118402],
-      [106.5869152, 16.6119096],
-      [106.5870032, 16.6120535],
-      [106.5862818, 16.6121743],
-      [106.5860268, 16.6120998],
-    ],
-  },
-  {
-    id: 'central-2',
-    name: 'Cụm dân cư trung tâm 2',
-    areaDescription: 'Khu Lê Lai - Lê Thế Tiết',
-    buildingCenters: [
-      [106.5926063, 16.6112079],
-      [106.5923461, 16.6111102],
-      [106.5923515, 16.6113004],
-      [106.5926385, 16.6114392],
-      [106.5923606, 16.6114392],
-      [106.592214, 16.6111591],
-    ],
-  },
-  {
-    id: 'central-3',
-    name: 'Cụm dân cư trung tâm 3',
-    areaDescription: 'Khu Thạch Hãn - Lê Văn Huân',
-    buildingCenters: [
-      [106.5985681, 16.6112259],
-      [106.5985073, 16.6110999],
-      [106.5984143, 16.6112901],
-      [106.5983543, 16.6110948],
-      [106.598393, 16.6114803],
-      [106.598795, 16.611321],
-    ],
-  },
-  {
-    id: 'central-4',
-    name: 'Cụm dân cư trung tâm 4',
-    areaDescription: 'Khu phía tây đường Lê Quý Đôn',
-    buildingCenters: [
-      [106.5865204, 16.6139426],
-      [106.5868269, 16.6139606],
-      [106.5867645, 16.6137679],
-      [106.5869827, 16.6137936],
-      [106.5871802, 16.6138347],
-      [106.5868235, 16.6134517],
-    ],
-  },
-  {
-    id: 'central-5',
-    name: 'Cụm dân cư trung tâm 5',
-    areaDescription: 'Khu trung tâm đường Lê Quý Đôn',
-    buildingCenters: [
-      [106.5925492, 16.6146417],
-      [106.5923957, 16.6147214],
-      [106.5929548, 16.6142819],
-      [106.5919962, 16.6142768],
-      [106.5923148, 16.6138681],
-      [106.5931342, 16.6140377],
-    ],
-  },
-  {
-    id: 'central-6',
-    name: 'Cụm dân cư trung tâm 6',
-    areaDescription: 'Khu phía đông đường Lê Quý Đôn',
-    buildingCenters: [
-      [106.5983873, 16.6144413],
-      [106.5982868, 16.6143385],
-      [106.5983731, 16.6141508],
-      [106.5982263, 16.6142048],
-      [106.5983821, 16.6138758],
-      [106.5981098, 16.6139375],
-    ],
-  },
-];
+const residentialClusters: ResidentialCluster[] = Array.from(
+  new Map(
+    TAY_CHIN_HOUSEHOLD_LOCATIONS.map((location) => [
+      location.clusterId,
+      {
+        id: location.clusterId,
+        name: 'Cụm dân cư ' + location.roadName,
+        areaDescription: 'Khu vực ' + location.roadName + ', thôn Tây Chín',
+        roadName: location.roadName,
+      },
+    ]),
+  ).values(),
+);
+
+const HOUSEHOLD_FAMILY_NAMES = [
+  'Nguyễn',
+  'Trần',
+  'Lê',
+  'Phạm',
+  'Hoàng',
+  'Phan',
+  'Võ',
+  'Đặng',
+  'Bùi',
+  'Đỗ',
+] as const;
+
+const HOUSEHOLD_GIVEN_NAMES = [
+  { name: 'Hùng', gender: 'Nam' },
+  { name: 'Lan', gender: 'Nữ' },
+  { name: 'Minh', gender: 'Nam' },
+  { name: 'Hương', gender: 'Nữ' },
+  { name: 'Tuấn', gender: 'Nam' },
+  { name: 'Thủy', gender: 'Nữ' },
+  { name: 'Đức', gender: 'Nam' },
+  { name: 'Mai', gender: 'Nữ' },
+  { name: 'Thành', gender: 'Nam' },
+  { name: 'Ngọc', gender: 'Nữ' },
+] as const;
+
+const HOUSEHOLD_MALE_MIDDLE_NAMES = [
+  'Văn',
+  'Hữu',
+  'Đình',
+  'Quốc',
+  'Xuân',
+  'Công',
+  'Thanh',
+  'Ngọc',
+  'Đức',
+  'Hoài',
+] as const;
+
+const HOUSEHOLD_FEMALE_MIDDLE_NAMES = [
+  'Thị',
+  'Ngọc',
+  'Thu',
+  'Thanh',
+  'Mỹ',
+  'Kim',
+  'Hoài',
+  'Phương',
+  'Bích',
+  'Thùy',
+] as const;
+
+function createMockHouseholdHead(index: number) {
+  const familyName =
+    HOUSEHOLD_FAMILY_NAMES[index % HOUSEHOLD_FAMILY_NAMES.length];
+  const givenName =
+    HOUSEHOLD_GIVEN_NAMES[
+      (index * 3 + Math.floor(index / 10)) % HOUSEHOLD_GIVEN_NAMES.length
+    ];
+  const middleNames =
+    givenName.gender === 'Nam'
+      ? HOUSEHOLD_MALE_MIDDLE_NAMES
+      : HOUSEHOLD_FEMALE_MIDDLE_NAMES;
+  const middleName = middleNames[Math.floor(index / 10) % middleNames.length];
+
+  return {
+    fullName: familyName + ' ' + middleName + ' ' + givenName.name,
+    gender: givenName.gender,
+    honorific: givenName.gender === 'Nam' ? 'ông' : 'bà',
+  };
+}
 
 interface HouseholdDemoRecord {
   id: string;
@@ -292,58 +315,87 @@ interface HouseholdDemoRecord {
 }
 
 const householdDemoRecords: HouseholdDemoRecord[] =
-  residentialClusters.flatMap((cluster, clusterIndex) =>
-    cluster.buildingCenters.map((coordinates, index) => {
-      const sequence = clusterIndex * cluster.buildingCenters.length + index + 1;
-      const householdCode = `HD-LB-${String(sequence).padStart(3, '0')}`;
-      const memberCount = 3 + ((clusterIndex + index) % 4);
-      const workingAgeMemberCount = Math.max(
-        1,
-        memberCount - 1 - ((clusterIndex + index) % 2),
-      );
-      const id = `household-building-${String(sequence).padStart(3, '0')}`;
-      const feature = createSeedFeature(
-        id,
-        'layer-households',
-        { type: 'Point', coordinates },
-        {
-          name: `Hộ dân mẫu ${householdCode}`,
-          description: `Hộ dân mô phỏng.`,
-          details: {
-            'Mã hộ': householdCode,
-            'Khu vực': cluster.areaDescription,
-            'Vị trí nhà': '',
-            'Số nhân khẩu': memberCount,
-            'Trong độ tuổi lao động': workingAgeMemberCount,
-            'Tình trạng nhà ở':
-              (clusterIndex + index) % 3 === 0
-                ? 'Nhà kiên cố'
-                : 'Nhà bán kiên cố',
-            'Nguồn vị trí':
-              '',
-          },
-          extra: {
-            householdCode,
-            residentialClusterId: cluster.id,
-            residentialClusterName: cluster.name,
-            memberCount,
-            workingAgeMemberCount,
-            buildingFootprintMatched: true,
-            mockGenerated: true,
-          },
+  TAY_CHIN_HOUSEHOLD_LOCATIONS.map((location, index) => {
+    const sequence = index + 1;
+    const householdCode = 'HD-TC-' + String(sequence).padStart(3, '0');
+    const memberCount = 2 + ((index * 7) % 5);
+    const workingAgeMemberCount = Math.max(
+      1,
+      memberCount - 1 - (index % 2),
+    );
+    const householdHead = createMockHouseholdHead(index);
+    const id = 'household-tay-chin-' + String(sequence).padStart(3, '0');
+    const ethnicity =
+      index % 10 === 0 ? 'Pa Kô' : index % 5 === 0 ? 'Vân Kiều' : 'Kinh';
+    const householdGroup =
+      index % 19 === 0
+        ? 'Hộ cận nghèo'
+        : index % 13 === 0
+          ? 'Hộ chính sách'
+          : 'Hộ dân cư';
+    const housingStatus =
+      index % 4 === 0
+        ? 'Nhà kiên cố'
+        : index % 4 === 1
+          ? 'Nhà bán kiên cố'
+          : index % 4 === 2
+            ? 'Nhà cấp 4'
+            : 'Nhà ở kết hợp kinh doanh';
+    const feature = createSeedFeature(
+      id,
+      'layer-households',
+      { type: 'Point', coordinates: location.coordinates },
+      {
+        name: 'Hộ ' + householdHead.honorific + ' ' + householdHead.fullName,
+        description:
+          'Hộ dân mô phỏng tại thôn Tây Chín; không phải dữ liệu nhân khẩu thật.',
+        details: {
+          'Mã hộ': householdCode,
+          'Chủ hộ': householdHead.fullName,
+          'Giới tính chủ hộ': householdHead.gender,
+          Thôn: 'Tây Chín',
+          'Khu dân cư': 'Khu vực ' + location.roadName,
+          'Địa chỉ mô phỏng':
+            location.roadName + ', thôn Tây Chín, xã Lao Bảo',
+          'Dân tộc': ethnicity,
+          'Số nhân khẩu': memberCount,
+          'Trong độ tuổi lao động': workingAgeMemberCount,
+          'Nhóm hộ': householdGroup,
+          'Tình trạng nhà ở': housingStatus,
+          'Tình trạng cư trú': 'Thường trú',
+          'Nguồn vị trí':
+            'OpenStreetMap, footprint công trình ' + location.osmBuildingId,
+          'Nguồn nhân khẩu': 'Dữ liệu mô phỏng phục vụ POC',
         },
-      );
+        extra: {
+          householdCode,
+          householdHeadName: householdHead.fullName,
+          householdHeadGender: householdHead.gender,
+          ethnicity,
+          householdGroup,
+          villageCode: 'tay-chin',
+          villageName: 'Tây Chín',
+          residentialClusterId: location.clusterId,
+          residentialClusterName: 'Cụm dân cư ' + location.roadName,
+          roadName: location.roadName,
+          memberCount,
+          workingAgeMemberCount,
+          osmBuildingId: location.osmBuildingId,
+          buildingFootprintMatched: true,
+          mockGenerated: true,
+        },
+      },
+    );
 
-      return {
-        id,
-        clusterId: cluster.id,
-        coordinates,
-        memberCount,
-        workingAgeMemberCount,
-        feature,
-      };
-    }),
-  );
+    return {
+      id,
+      clusterId: location.clusterId,
+      coordinates: location.coordinates,
+      memberCount,
+      workingAgeMemberCount,
+      feature,
+    };
+  });
 
 const householdFeatures = householdDemoRecords.map((record) => record.feature);
 
@@ -373,7 +425,7 @@ const workingAgeZoneFeatures = residentialClusters.map((cluster) => {
   );
 
   return createSeedFeature(
-    `working-age-cluster-${cluster.id}`,
+    'working-age-cluster-tay-chin-' + cluster.id,
     'layer-working-age-population',
     {
       type: 'Polygon',
@@ -388,9 +440,11 @@ const workingAgeZoneFeatures = residentialClusters.map((cluster) => {
       ],
     },
     {
-      name: `Vùng độ tuổi lao động - ${cluster.name}`,
-      description: `Vùng tổng hợp mô phỏng.`,
+      name: 'Vùng độ tuổi lao động - ' + cluster.roadName,
+      description:
+        'Vùng tổng hợp mô phỏng bao quanh cụm hộ dân tại thôn Tây Chín.',
       details: {
+        Thôn: 'Tây Chín',
         'Khu vực': cluster.areaDescription,
         'Số hộ mẫu': households.length,
         'Tổng nhân khẩu mẫu': population,
@@ -399,6 +453,8 @@ const workingAgeZoneFeatures = residentialClusters.map((cluster) => {
         Nguồn: 'Tổng hợp từ cụm hộ dân mô phỏng',
       },
       extra: {
+        villageCode: 'tay-chin',
+        villageName: 'Tây Chín',
         residentialClusterId: cluster.id,
         residentialClusterName: cluster.name,
         householdIds: households.map((household) => household.id),
@@ -411,6 +467,34 @@ const workingAgeZoneFeatures = residentialClusters.map((cluster) => {
   );
 });
 
+const tayChinCommunityFeatures = TAY_CHIN_COMMUNITY_PLACES.map(
+  (place, index) =>
+    createSeedFeature(
+      place.id,
+      place.layerId,
+      { type: 'Point', coordinates: place.coordinates },
+      {
+        name: place.name,
+        description: place.description,
+        details: {
+          'Mã dữ liệu': 'TC-CS-' + String(index + 1).padStart(3, '0'),
+          Thôn: 'Tây Chín',
+          'Khu vực': place.roadName,
+          'Loại cơ sở': place.facilityType,
+          'Trạng thái': place.operatingStatus,
+          'Quy mô': place.scale,
+          Nguồn: place.source,
+        },
+        extra: {
+          villageCode: 'tay-chin',
+          villageName: 'Tây Chín',
+          roadName: place.roadName,
+          facilityType: place.facilityType,
+          mockGenerated: true,
+        },
+      },
+    ),
+);
 const tourismFeatures = MOCK_TOURISM_POIS.map((poi) => {
   const layerId = tourismLayerIds[poi.type];
   return createSeedFeature(
@@ -672,6 +756,7 @@ const baseSeedFeatures = [
   ...villageLabelFeatures,
   ...householdFeatures,
   ...workingAgeZoneFeatures,
+  ...tayChinCommunityFeatures,
   ...tourismFeatures,
   ...facilityFeatures,
   ...disasterFeatures,
