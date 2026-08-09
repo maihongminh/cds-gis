@@ -12,6 +12,7 @@ import Point from 'ol/geom/Point';
 import Polygon from 'ol/geom/Polygon';
 import Graticule from 'ol/layer/Graticule';
 import LayerGroup from 'ol/layer/Group';
+import ImageLayer from 'ol/layer/Image';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import OlMap from 'ol/Map';
@@ -24,6 +25,7 @@ import Select from 'ol/interaction/Select';
 import Snap from 'ol/interaction/Snap';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import VectorSource from 'ol/source/Vector';
+import ImageCanvasSource from 'ol/source/ImageCanvas';
 import XYZ from 'ol/source/XYZ';
 import CircleStyle from 'ol/style/Circle';
 import Fill from 'ol/style/Fill';
@@ -78,13 +80,24 @@ import {
   fetchDemoGisFeatures,
   saveDemoGisFeature as persistDemoGisFeature,
 } from '@/lib/demo-gis-api';
-import { BASE_LAYERS, LAOBAO_CENTER } from '@/lib/map-config';
+import { BASE_LAYERS, LAOBAO_CENTER, VIETNAM_CENTER } from '@/lib/map-config';
 import {
   buildIconPinMarkerSvg,
   type MapMarkerIconName,
 } from '@/lib/map-style-config';
+import {
+  getPrecipitationColor,
+  getTemperatureColor,
+  getWindColor,
+  interpolateWeatherValue,
+} from '@/lib/weather-config';
 import { cn } from '@/lib/utils';
 import type { DemoGisFeature } from '@/types/demo-gis';
+import type {
+  MapMode,
+  WeatherForecastData,
+  WeatherLayerId,
+} from '@/types/weather';
 
 export interface MapState {
   activeLayerIds: string[];
@@ -102,6 +115,20 @@ export interface MapState {
   setFlyToCoords: (c: [number, number, number?] | null) => void;
   activeBaseLayerId: string;
   setActiveBaseLayerId: (id: string) => void;
+  mapMode: MapMode;
+  setMapMode: (mode: MapMode) => void;
+  weatherLayerId: WeatherLayerId;
+  setWeatherLayerId: (layerId: WeatherLayerId) => void;
+  weatherForecastIndex: number;
+  setWeatherForecastIndex: React.Dispatch<React.SetStateAction<number>>;
+  weatherOpacity: number;
+  setWeatherOpacity: (opacity: number) => void;
+  weatherSelectedCoordinates: [number, number] | null;
+  setWeatherSelectedCoordinates: (coordinates: [number, number] | null) => void;
+  weatherData: WeatherForecastData | null;
+  weatherIsLoading: boolean;
+  weatherError: string | null;
+  reloadWeather: () => void;
   currentRole: string | null;
 }
 
@@ -117,6 +144,16 @@ interface SavedObjectPopup {
   geometryKind: EditableGeometryKind;
   layerId: string;
   details: Record<string, string | number | boolean | null>;
+}
+
+interface WeatherPopup {
+  latitude: number;
+  longitude: number;
+  time: string;
+  temperature: number | null;
+  precipitation: number | null;
+  windSpeed: number | null;
+  windDirection: number | null;
 }
 
 type PlanningPolygonGeometry = GeoJsonPolygon | GeoJsonMultiPolygon;
@@ -533,6 +570,136 @@ function demoFeatureStyle(
   return editableFeatureStyle(feature, resolution);
 }
 
+const WEATHER_REFERENCE_LAYER_IDS = new Set([
+  'layer-commune',
+  'layer-villages',
+  'layer-village-labels',
+]);
+
+function createWeatherCanvasSource(
+  weatherData: WeatherForecastData,
+  forecastIndex: number,
+  layerId: WeatherLayerId,
+) {
+  const { rows, columns } = weatherData.grid;
+  const valueAt = (row: number, column: number) => {
+    const point = weatherData.points[row * columns + column];
+    if (!point) return null;
+    if (layerId === 'temperature') return point.temperature[forecastIndex];
+    if (layerId === 'precipitation') return point.precipitation[forecastIndex];
+    return point.windSpeed[forecastIndex];
+  };
+  const parseColor = (color: string) =>
+    [1, 3, 5].map((index) =>
+      Number.parseInt(color.slice(index, index + 2), 16),
+    );
+  const colorCache = new globalThis.Map<number, number[]>();
+  const colorForValue = (value: number) => {
+    const precision = layerId === 'wind' ? 2 : 10;
+    const cacheKey = Math.round(value * precision) / precision;
+    const cached = colorCache.get(cacheKey);
+    if (cached) return cached;
+    const color = parseColor(
+      layerId === 'temperature'
+        ? getTemperatureColor(cacheKey)
+        : layerId === 'precipitation'
+          ? getPrecipitationColor(cacheKey)
+          : getWindColor(cacheKey),
+    );
+    colorCache.set(cacheKey, color);
+    return color;
+  };
+
+  return new ImageCanvasSource({
+    attributions: weatherData.attribution,
+    projection: 'EPSG:3857',
+    // Keep one zoom level of weather raster outside the viewport. OpenLayers
+    // reuses this image while the view is animating, so the buffer prevents
+    // the canvas edge from becoming visible during normal zoom-out gestures.
+    ratio: 2,
+    interpolate: true,
+    canvasFunction: (extent, _resolution, _pixelRatio, size) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size[0];
+      canvas.height = size[1];
+      const context = canvas.getContext('2d');
+      if (!context) return canvas;
+
+      const renderWidth = Math.min(260, Math.max(1, size[0]));
+      const renderHeight = Math.min(
+        200,
+        Math.max(1, Math.round((renderWidth * size[1]) / size[0])),
+      );
+      const workingCanvas = document.createElement('canvas');
+      workingCanvas.width = renderWidth;
+      workingCanvas.height = renderHeight;
+      const workingContext = workingCanvas.getContext('2d');
+      if (!workingContext) return canvas;
+      const image = workingContext.createImageData(renderWidth, renderHeight);
+      const earthRadius = 6_378_137;
+      const radiansToDegrees = 180 / Math.PI;
+
+      for (let y = 0; y < renderHeight; y += 1) {
+        const projectedY =
+          extent[3] -
+          (y / Math.max(1, renderHeight - 1)) * (extent[3] - extent[1]);
+        const latitude =
+          Math.atan(Math.sinh(projectedY / earthRadius)) * radiansToDegrees;
+        const normalizedGridY =
+          ((latitude - weatherData.grid.south) /
+            (weatherData.grid.north - weatherData.grid.south)) *
+          (rows - 1);
+        const gridY = Math.max(0, Math.min(rows - 1, normalizedGridY));
+        const row0 = Math.floor(gridY);
+        const row1 = Math.min(rows - 1, row0 + 1);
+        const rowRatio = gridY - row0;
+
+        for (let x = 0; x < renderWidth; x += 1) {
+          const projectedX =
+            extent[0] +
+            (x / Math.max(1, renderWidth - 1)) * (extent[2] - extent[0]);
+          const longitude = (projectedX / earthRadius) * radiansToDegrees;
+          const normalizedGridX =
+            ((longitude - weatherData.grid.west) /
+              (weatherData.grid.east - weatherData.grid.west)) *
+            (columns - 1);
+          const gridX = Math.max(0, Math.min(columns - 1, normalizedGridX));
+          const column0 = Math.floor(gridX);
+          const column1 = Math.min(columns - 1, column0 + 1);
+          const columnRatio = gridX - column0;
+          const values = [
+            valueAt(row0, column0),
+            valueAt(row0, column1),
+            valueAt(row1, column0),
+            valueAt(row1, column1),
+          ];
+          if (values.some((value) => value === null || value === undefined)) {
+            continue;
+          }
+          const [topLeft, topRight, bottomLeft, bottomRight] =
+            values as number[];
+          const top = topLeft + (topRight - topLeft) * columnRatio;
+          const bottom = bottomLeft + (bottomRight - bottomLeft) * columnRatio;
+          const value = top + (bottom - top) * rowRatio;
+          const color = colorForValue(value);
+          const offset = (y * renderWidth + x) * 4;
+          image.data[offset] = color[0];
+          image.data[offset + 1] = color[1];
+          image.data[offset + 2] = color[2];
+          image.data[offset + 3] =
+            layerId === 'precipitation' && value < 0.05 ? 28 : 230;
+        }
+      }
+
+      workingContext.putImageData(image, 0, 0);
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+      context.drawImage(workingCanvas, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    },
+  });
+}
+
 function editableGeometryKind(feature: Feature): EditableGeometryKind | null {
   const geometryType = feature.getGeometry()?.getType();
   if (geometryType === 'Point' || geometryType === 'MultiPoint') return 'point';
@@ -804,14 +971,23 @@ export default function MapClient({
   const editableSourceRef = React.useRef(new VectorSource());
   const planningComparisonSourceRef = React.useRef(new VectorSource());
   const editableLayerRef = React.useRef<VectorLayer | null>(null);
+  const weatherRasterLayerRef = React.useRef<ImageLayer<ImageCanvasSource> | null>(null);
   const selectInteractionRef = React.useRef<Select | null>(null);
   const activeDrawInteractionRef = React.useRef<Draw | null>(null);
   const drawCoordinateOverlayRef = React.useRef<HTMLDivElement>(null);
+  const weatherParticleCanvasRef = React.useRef<HTMLCanvasElement>(null);
   const objectPopupElementRef = React.useRef<HTMLDivElement>(null);
   const objectPopupOverlayRef = React.useRef<Overlay | null>(null);
+  const weatherPopupElementRef = React.useRef<HTMLDivElement>(null);
+  const weatherPopupOverlayRef = React.useRef<Overlay | null>(null);
   const activeEditorInteractionsRef = React.useRef<Array<Draw | Modify | Snap>>([]);
   const eventKeysRef = React.useRef<EventsKey[]>([]);
   const hasFitDemoDataRef = React.useRef(false);
+  const previousMapModeRef = React.useRef<MapMode>(mapState.mapMode);
+  const mapViewBeforeWeatherRef = React.useRef<{
+    center: number[];
+    zoom: number;
+  } | null>(null);
   const isPlanningComparisonModeRef = React.useRef(false);
   const planningComparisonFeatureIdsRef = React.useRef<string[]>([]);
 
@@ -837,6 +1013,8 @@ export default function MapClient({
     React.useState('#fb923c');
   const [savedObjectPopup, setSavedObjectPopup] =
     React.useState<SavedObjectPopup | null>(null);
+  const [weatherPopup, setWeatherPopup] =
+    React.useState<WeatherPopup | null>(null);
   const [featureFormError, setFeatureFormError] = React.useState<string | null>(
     null,
   );
@@ -1178,6 +1356,11 @@ export default function MapClient({
     setSavedObjectPopup(null);
   }, []);
 
+  const closeWeatherPopup = React.useCallback(() => {
+    weatherPopupOverlayRef.current?.setPosition(undefined);
+    setWeatherPopup(null);
+  }, []);
+
   const openSavedObjectPopup = React.useCallback(
     (feature: Feature, coordinate: number[]) => {
       const featureId = String(feature.getId() ?? '');
@@ -1233,6 +1416,31 @@ export default function MapClient({
       );
     };
   }, [closeSavedObjectPopup, savedObjectPopup]);
+
+  React.useEffect(() => {
+    if (!weatherPopup) return;
+
+    const handlePointerDownOutside = (event: PointerEvent) => {
+      const popupElement = weatherPopupElementRef.current;
+      if (
+        popupElement &&
+        event.target instanceof Node &&
+        popupElement.contains(event.target)
+      ) {
+        return;
+      }
+      closeWeatherPopup();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownOutside, true);
+    return () => {
+      document.removeEventListener(
+        'pointerdown',
+        handlePointerDownOutside,
+        true,
+      );
+    };
+  }, [closeWeatherPopup, weatherPopup]);
 
   React.useEffect(() => {
     mapStateRef.current = mapState;
@@ -1306,10 +1514,25 @@ export default function MapClient({
       zIndex: 90,
     });
 
+    const weatherRasterLayer = new ImageLayer<ImageCanvasSource>({
+      visible: false,
+      zIndex: 24,
+    });
+    weatherRasterLayer.set('layerId', 'weather-raster');
+    weatherRasterLayerRef.current = weatherRasterLayer;
+
     const editableLayer = new VectorLayer({
       source: editableSourceRef.current,
       style: (feature, resolution) => {
         const layerId = String(feature.get('layerId') ?? '');
+        if (mapStateRef.current.mapMode === 'weather') {
+          if (!WEATHER_REFERENCE_LAYER_IDS.has(layerId)) return undefined;
+          return demoFeatureStyle(
+            feature,
+            mapStateRef.current.selectedVillageCode,
+            resolution,
+          );
+        }
         const layerConfig = MAP_LAYER_BY_ID.get(layerId);
         const canViewLayer =
           !layerConfig ||
@@ -1373,6 +1596,7 @@ export default function MapClient({
         styledBaseLayer,
         administrativeBaseLayer,
         graticule,
+        weatherRasterLayer,
         ...registeredLayers.map(([, layer]) => layer),
         sovereigntyLayer,
         editableLayer,
@@ -1397,6 +1621,16 @@ export default function MapClient({
       });
       objectPopupOverlayRef.current = objectPopupOverlay;
       map.addOverlay(objectPopupOverlay);
+    }
+    if (weatherPopupElementRef.current) {
+      const weatherPopupOverlay = new Overlay({
+        element: weatherPopupElementRef.current,
+        positioning: 'bottom-center',
+        offset: [0, -12],
+        stopEvent: true,
+      });
+      weatherPopupOverlayRef.current = weatherPopupOverlay;
+      map.addOverlay(weatherPopupOverlay);
     }
 
     const loadedAdministrativeProvinceIds = new Set<string>();
@@ -1470,7 +1704,10 @@ export default function MapClient({
       'featuresloadend',
       loadVisibleAdministrativeCommunes,
     );
-    eventKeysRef.current.push(administrativeMoveKey, administrativeProvinceLoadKey);
+    eventKeysRef.current.push(
+      administrativeMoveKey,
+      administrativeProvinceLoadKey,
+    );
 
     const selection = new Select({
       layers: [editableLayer],
@@ -1507,6 +1744,66 @@ export default function MapClient({
     eventKeysRef.current.push(selectionKey);
 
     const clickKey = map.on('singleclick', (event) => {
+      if (mapStateRef.current.mapMode === 'weather') {
+        closeSavedObjectPopup();
+        const weatherData = mapStateRef.current.weatherData;
+        const [clickedLongitude, clickedLatitude] = toLonLat(event.coordinate);
+        if (
+          !weatherData ||
+          clickedLongitude < weatherData.grid.west ||
+          clickedLongitude > weatherData.grid.east ||
+          clickedLatitude < weatherData.grid.south ||
+          clickedLatitude > weatherData.grid.north
+        ) {
+          closeWeatherPopup();
+          return;
+        }
+        const forecastIndex = Math.min(
+          mapStateRef.current.weatherForecastIndex,
+          Math.max(0, weatherData.forecastHours.length - 1),
+        );
+        mapStateRef.current.setWeatherSelectedCoordinates([
+          clickedLongitude,
+          clickedLatitude,
+        ]);
+        setWeatherPopup({
+          latitude: clickedLatitude,
+          longitude: clickedLongitude,
+          time: weatherData.forecastHours[forecastIndex] ?? '',
+          temperature: interpolateWeatherValue(
+            weatherData,
+            'temperature',
+            forecastIndex,
+            clickedLongitude,
+            clickedLatitude,
+          ),
+          precipitation: interpolateWeatherValue(
+            weatherData,
+            'precipitation',
+            forecastIndex,
+            clickedLongitude,
+            clickedLatitude,
+          ),
+          windSpeed: interpolateWeatherValue(
+            weatherData,
+            'windSpeed',
+            forecastIndex,
+            clickedLongitude,
+            clickedLatitude,
+          ),
+          windDirection: interpolateWeatherValue(
+            weatherData,
+            'windDirection',
+            forecastIndex,
+            clickedLongitude,
+            clickedLatitude,
+          ),
+        });
+        weatherPopupOverlayRef.current?.setPosition(event.coordinate);
+        return;
+      }
+
+      closeWeatherPopup();
       const savedEditableFeatures = map
         .getFeaturesAtPixel(event.pixel, {
           hitTolerance: 8,
@@ -1604,6 +1901,7 @@ export default function MapClient({
       map.setTarget(undefined);
       mapRef.current = null;
       objectPopupOverlayRef.current = null;
+      weatherPopupOverlayRef.current = null;
       baseLayerRef.current = null;
       baseOverlayLayerRef.current = null;
       styledBaseLayerRef.current = null;
@@ -1615,11 +1913,13 @@ export default function MapClient({
       villageLayerRef.current = null;
       hasFitDemoDataRef.current = false;
       editableLayerRef.current = null;
+      weatherRasterLayerRef.current = null;
       selectInteractionRef.current = null;
       registry.clear();
     };
   }, [
     clearSelectedFeatureState,
+    closeWeatherPopup,
     closeSavedObjectPopup,
     loadSelectedFeatureState,
     onObjectEditorClose,
@@ -1727,6 +2027,237 @@ export default function MapClient({
     if (!mapReady) return;
     villageLayerRef.current?.changed();
   }, [mapReady, mapState.selectedVillageCode]);
+
+  React.useEffect(() => {
+    const map = mapRef.current;
+    if (!mapReady || !map) return;
+    const previousMode = previousMapModeRef.current;
+    if (previousMode === mapState.mapMode) return;
+
+    const view = map.getView();
+    if (mapState.mapMode === 'weather') {
+      const center = view.getCenter();
+      mapViewBeforeWeatherRef.current =
+        center && typeof view.getZoom() === 'number'
+          ? { center: [...center], zoom: view.getZoom()! }
+          : null;
+      view.animate({
+        center: fromLonLat([VIETNAM_CENTER.lng, VIETNAM_CENTER.lat]),
+        zoom: VIETNAM_CENTER.zoom,
+        duration: 500,
+      });
+    } else if (mapViewBeforeWeatherRef.current) {
+      view.animate({
+        center: mapViewBeforeWeatherRef.current.center,
+        zoom: mapViewBeforeWeatherRef.current.zoom,
+        duration: 500,
+      });
+      mapViewBeforeWeatherRef.current = null;
+    }
+    previousMapModeRef.current = mapState.mapMode;
+  }, [mapReady, mapState.mapMode]);
+
+  React.useEffect(() => {
+    const weatherRasterLayer = weatherRasterLayerRef.current;
+    if (!mapReady || !weatherRasterLayer) return;
+
+    const isWeatherMode = mapState.mapMode === 'weather';
+    weatherRasterLayer.setVisible(
+      isWeatherMode && Boolean(mapState.weatherData),
+    );
+    weatherRasterLayer.setOpacity(mapState.weatherOpacity);
+    editableLayerRef.current?.changed();
+
+    if (!isWeatherMode) {
+      closeWeatherPopup();
+      return;
+    }
+
+    closeSavedObjectPopup();
+    closeWeatherPopup();
+    selectInteractionRef.current?.getFeatures().clear();
+    clearSelectedFeatureState();
+    setEditorMode('view');
+
+    const weatherData = mapState.weatherData;
+    if (!weatherData) return;
+    const forecastIndex = Math.min(
+      mapState.weatherForecastIndex,
+      Math.max(0, weatherData.forecastHours.length - 1),
+    );
+    const weatherCanvasSource = createWeatherCanvasSource(
+      weatherData,
+      forecastIndex,
+      mapState.weatherLayerId,
+    );
+    weatherRasterLayer.setSource(weatherCanvasSource);
+  }, [
+    clearSelectedFeatureState,
+    closeSavedObjectPopup,
+    closeWeatherPopup,
+    mapReady,
+    mapState.mapMode,
+    mapState.weatherData,
+    mapState.weatherForecastIndex,
+    mapState.weatherLayerId,
+    mapState.weatherOpacity,
+  ]);
+
+  React.useEffect(() => {
+    const canvas = weatherParticleCanvasRef.current;
+    const map = mapRef.current;
+    const weatherData = mapState.weatherData;
+    if (
+      !mapReady ||
+      !canvas ||
+      !map ||
+      mapState.mapMode !== 'weather' ||
+      mapState.weatherLayerId !== 'wind' ||
+      !weatherData
+    ) {
+      const context = canvas?.getContext('2d');
+      if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    const context = canvas.getContext('2d');
+    const target = targetRef.current;
+    if (!context || !target) return;
+    const forecastIndex = Math.min(
+      mapState.weatherForecastIndex,
+      Math.max(0, weatherData.forecastHours.length - 1),
+    );
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    const resizeCanvas = () => {
+      const bounds = target.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.round(bounds.width * pixelRatio));
+      canvas.height = Math.max(1, Math.round(bounds.height * pixelRatio));
+      canvas.style.width = `${bounds.width}px`;
+      canvas.style.height = `${bounds.height}px`;
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    };
+    resizeCanvas();
+    const resizeObserver = new ResizeObserver(resizeCanvas);
+    resizeObserver.observe(target);
+
+    interface WindParticle {
+      x: number;
+      y: number;
+      age: number;
+      maxAge: number;
+    }
+    const particles: WindParticle[] = Array.from({ length: 220 }, () => ({
+      x: Math.random() * target.clientWidth,
+      y: Math.random() * target.clientHeight,
+      age: Math.random() * 80,
+      maxAge: 50 + Math.random() * 70,
+    }));
+    const resetParticle = (particle: WindParticle) => {
+      particle.x = Math.random() * target.clientWidth;
+      particle.y = Math.random() * target.clientHeight;
+      particle.age = 0;
+      particle.maxAge = 50 + Math.random() * 70;
+    };
+    const { rows, columns, west, south, east, north } = weatherData.grid;
+    const vectorAt = (row: number, column: number) => {
+      const point = weatherData.points[row * columns + column];
+      const speed = point?.windSpeed[forecastIndex];
+      const direction = point?.windDirection[forecastIndex];
+      if (speed === null || speed === undefined || direction === null || direction === undefined) {
+        return [0, 0] as const;
+      }
+      const radians = (direction * Math.PI) / 180;
+      return [-speed * Math.sin(radians), speed * Math.cos(radians)] as const;
+    };
+    const sampleVector = (longitude: number, latitude: number) => {
+      const gridX = Math.max(
+        0,
+        Math.min(columns - 1, ((longitude - west) / (east - west)) * (columns - 1)),
+      );
+      const gridY = Math.max(
+        0,
+        Math.min(rows - 1, ((latitude - south) / (north - south)) * (rows - 1)),
+      );
+      const column0 = Math.floor(gridX);
+      const column1 = Math.min(columns - 1, column0 + 1);
+      const row0 = Math.floor(gridY);
+      const row1 = Math.min(rows - 1, row0 + 1);
+      const xRatio = gridX - column0;
+      const yRatio = gridY - row0;
+      const topLeft = vectorAt(row0, column0);
+      const topRight = vectorAt(row0, column1);
+      const bottomLeft = vectorAt(row1, column0);
+      const bottomRight = vectorAt(row1, column1);
+      const interpolate = (index: 0 | 1) => {
+        const top = topLeft[index] + (topRight[index] - topLeft[index]) * xRatio;
+        const bottom = bottomLeft[index] + (bottomRight[index] - bottomLeft[index]) * xRatio;
+        return top + (bottom - top) * yRatio;
+      };
+      return [interpolate(0), interpolate(1)] as const;
+    };
+
+    let animationFrame = 0;
+    let previousFrame = 0;
+    const animate = (timestamp: number) => {
+      animationFrame = window.requestAnimationFrame(animate);
+      if (document.hidden || timestamp - previousFrame < 32) return;
+      previousFrame = timestamp;
+      const width = target.clientWidth;
+      const height = target.clientHeight;
+      context.save();
+      context.globalCompositeOperation = 'destination-out';
+      context.fillStyle = 'rgba(0,0,0,0.13)';
+      context.fillRect(0, 0, width, height);
+      context.restore();
+      context.save();
+      context.globalCompositeOperation = 'source-over';
+      context.lineWidth = 1.05;
+      context.strokeStyle = 'rgba(255,255,255,0.92)';
+
+      particles.forEach((particle) => {
+        if (
+          particle.age >= particle.maxAge ||
+          particle.x < 0 ||
+          particle.x > width ||
+          particle.y < 0 ||
+          particle.y > height
+        ) {
+          resetParticle(particle);
+        }
+        const coordinate = map.getCoordinateFromPixel([particle.x, particle.y]);
+        if (!coordinate) {
+          resetParticle(particle);
+          return;
+        }
+        const [longitude, latitude] = toLonLat(coordinate);
+        const [windX, windY] = sampleVector(longitude, latitude);
+        const speedScale = 0.035;
+        const nextX = particle.x + windX * speedScale;
+        const nextY = particle.y + windY * speedScale;
+        context.beginPath();
+        context.moveTo(particle.x, particle.y);
+        context.lineTo(nextX, nextY);
+        context.stroke();
+        particle.x = nextX;
+        particle.y = nextY;
+        particle.age += 1;
+      });
+      context.restore();
+    };
+    animationFrame = window.requestAnimationFrame(animate);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      resizeObserver.disconnect();
+      context.clearRect(0, 0, canvas.width, canvas.height);
+    };
+  }, [
+    mapReady,
+    mapState.mapMode,
+    mapState.weatherData,
+    mapState.weatherForecastIndex,
+    mapState.weatherLayerId,
+  ]);
 
   React.useEffect(() => {
     if (
@@ -1846,6 +2377,10 @@ export default function MapClient({
 
     const source = editableSourceRef.current;
     const interactions: Array<Draw | Modify | Snap> = [];
+    if (mapState.mapMode === 'weather') {
+      selection?.setActive(false);
+      return;
+    }
     const isDrawMode =
       editorMode === 'point' ||
       editorMode === 'line' ||
@@ -1939,6 +2474,7 @@ export default function MapClient({
     editorMode,
     loadSelectedFeatureState,
     mapReady,
+    mapState.mapMode,
     onObjectEditorOpen,
   ]);
 
@@ -2419,11 +2955,88 @@ export default function MapClient({
   return (
     <div className="relative h-full min-h-[520px] w-full overflow-hidden bg-slate-100 dark:bg-slate-950">
       <div ref={targetRef} className="h-full min-h-[520px] w-full" aria-label="Bản đồ GIS OpenLayers" />
+      <canvas
+        ref={weatherParticleCanvasRef}
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none absolute inset-0 z-[5]',
+          (mapState.mapMode !== 'weather' || mapState.weatherLayerId !== 'wind') &&
+            'hidden',
+        )}
+      />
       <div
         ref={drawCoordinateOverlayRef}
         aria-hidden="true"
         className="pointer-events-none absolute left-0 top-0 z-30 whitespace-nowrap rounded-md border border-border/80 bg-card/95 px-2 py-1 font-mono text-[9px] font-semibold text-foreground opacity-0 shadow-md backdrop-blur-sm transition-opacity will-change-transform"
       />
+      <div
+        ref={weatherPopupElementRef}
+        className={cn(
+          'relative z-[1100] w-64 rounded-xl border border-border/80 bg-card/98 p-3 text-foreground shadow-xl backdrop-blur-md',
+          !weatherPopup && 'hidden',
+        )}
+      >
+        {weatherPopup && (
+          <>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-bold">Dự báo tại điểm chọn</p>
+                <p className="mt-0.5 text-[9px] text-muted-foreground">
+                  {weatherPopup.time
+                    ? new Date(weatherPopup.time).toLocaleString('vi-VN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        day: '2-digit',
+                        month: '2-digit',
+                      })
+                    : 'Chưa có thời gian dự báo'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeWeatherPopup}
+                className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Đóng thông tin thời tiết"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <div className="mt-2.5 grid grid-cols-3 gap-1.5 text-center">
+              <div className="rounded-md bg-red-500/10 px-1 py-2">
+                <p className="text-[8px] text-muted-foreground">Nhiệt độ</p>
+                <p className="mt-0.5 text-[11px] font-bold text-red-600">
+                  {weatherPopup.temperature?.toLocaleString('vi-VN', {
+                    maximumFractionDigits: 1,
+                  }) ?? '—'}°C
+                </p>
+              </div>
+              <div className="rounded-md bg-blue-500/10 px-1 py-2">
+                <p className="text-[8px] text-muted-foreground">Mưa</p>
+                <p className="mt-0.5 text-[11px] font-bold text-blue-600">
+                  {weatherPopup.precipitation?.toLocaleString('vi-VN', {
+                    maximumFractionDigits: 1,
+                  }) ?? '—'} mm
+                </p>
+              </div>
+              <div className="rounded-md bg-emerald-500/10 px-1 py-2">
+                <p className="text-[8px] text-muted-foreground">Gió</p>
+                <p className="mt-0.5 text-[11px] font-bold text-emerald-600">
+                  {weatherPopup.windSpeed?.toLocaleString('vi-VN', {
+                    maximumFractionDigits: 0,
+                  }) ?? '—'} km/h
+                </p>
+              </div>
+            </div>
+            <p className="mt-2 text-[8px] text-muted-foreground">
+              {weatherPopup.latitude.toFixed(4)}, {weatherPopup.longitude.toFixed(4)}
+              {weatherPopup.windDirection !== null
+                ? ` · hướng gió ${Math.round(weatherPopup.windDirection)}°`
+                : ''}
+            </p>
+            <span className="absolute -bottom-1.5 left-1/2 size-3 -translate-x-1/2 rotate-45 border-r border-b border-border/80 bg-card" />
+          </>
+        )}
+      </div>
       <div
         ref={objectPopupElementRef}
         className={cn(
@@ -2503,7 +3116,8 @@ export default function MapClient({
       <div
         className={cn(
           'absolute bottom-2 left-2.5 z-10 max-h-[calc(100%-6rem)] w-[min(26rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/95 p-2.5 shadow-lg backdrop-blur-sm',
-          isPlanningComparisonMode && 'hidden',
+          (isPlanningComparisonMode || mapState.mapMode === 'weather') &&
+            'hidden',
         )}
       >
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -2847,7 +3461,7 @@ export default function MapClient({
 
       </div>
 
-      {isPlanningComparisonMode && (
+      {mapState.mapMode === 'gis' && isPlanningComparisonMode && (
         <div className="absolute bottom-2 left-2.5 z-20 max-h-[calc(100%-6rem)] w-[min(32rem,calc(100%-1.25rem))] overflow-y-auto rounded-xl border border-border/70 bg-card/97 p-3 shadow-xl backdrop-blur-md">
           <div className="flex items-start justify-between gap-3">
             <div>

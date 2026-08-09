@@ -15,7 +15,7 @@ export const LAOBAO_CENTER: MapCenter = {
 export const VIETNAM_CENTER: MapCenter = {
   lat: 14.0583,
   lng: 108.2772,
-  zoom: 5,
+  zoom: 5.8,
 };
 
 export interface TileLayerConfig {

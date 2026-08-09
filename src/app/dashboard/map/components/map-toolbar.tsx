@@ -8,7 +8,10 @@ import {
   Button,
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
   Tooltip,
@@ -16,12 +19,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui';
-import { Layers, Map as MapIcon, MapPinned } from 'lucide-react';
+import { CloudSun, Layers, Map as MapIcon, MapPinned } from 'lucide-react';
 import { VILLAGES, COMMUNE } from '@/data/laobao-administrative-units';
 import { BASE_LAYERS, VIETNAM_CENTER } from '@/lib/map-config';
 import type { MapState } from '@/components/map/map-client';
 import { MapSearch } from './map-search';
 import { cn } from '@/lib/utils';
+import { WEATHER_MAP_MODE_ID } from '@/lib/weather-config';
 
 interface MapToolbarProps {
   mapState: MapState;
@@ -39,8 +43,24 @@ export function MapToolbar({
   onFitCommune,
   className,
 }: MapToolbarProps) {
-  const { selectedVillageCode, setSelectedVillageCode, setFlyToCoords, activeBaseLayerId, setActiveBaseLayerId } =
-    mapState;
+  const {
+    selectedVillageCode,
+    setSelectedVillageCode,
+    setFlyToCoords,
+    activeBaseLayerId,
+    setActiveBaseLayerId,
+    mapMode,
+    setMapMode,
+  } = mapState;
+
+  function handleMapSelection(value: string) {
+    if (value === WEATHER_MAP_MODE_ID) {
+      setMapMode('weather');
+      return;
+    }
+    setMapMode('gis');
+    setActiveBaseLayerId(value);
+  }
 
   function handleVillageChange(code: string) {
     if (code === 'all') {
@@ -82,7 +102,7 @@ export function MapToolbar({
               <span className="hidden lg:inline font-medium">Toàn Việt Nam</span>
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Thu nhỏ để xem toàn Việt Nam</TooltipContent>
+          <TooltipContent side="bottom">Xem trọn lãnh thổ Việt Nam</TooltipContent>
         </Tooltip>
 
         {/* Village selector */}
@@ -111,47 +131,74 @@ export function MapToolbar({
         <div className="flex-1" />
 
         {/* Base layer switcher */}
-        <Select value={activeBaseLayerId} onValueChange={setActiveBaseLayerId}>
+        <Select
+          value={mapMode === 'weather' ? WEATHER_MAP_MODE_ID : activeBaseLayerId}
+          onValueChange={handleMapSelection}
+        >
           <SelectTrigger
             className="h-8 w-48 shrink-0 cursor-pointer border-border bg-background text-xs shadow-none sm:w-56"
             aria-label="Chọn bản đồ nền"
           >
-            <MapIcon className="size-3.5 shrink-0 text-primary" />
-            <SelectValue placeholder="Chọn bản đồ nền" />
+            {mapMode === 'weather' ? (
+              <CloudSun className="size-3.5 shrink-0 text-primary" />
+            ) : (
+              <MapIcon className="size-3.5 shrink-0 text-primary" />
+            )}
+            <SelectValue placeholder="Chọn bản đồ" />
           </SelectTrigger>
           <SelectContent
             align="end"
             className="z-[1200] border-border bg-card text-xs"
           >
-            {BASE_LAYERS.map((layer) => (
+            <SelectGroup>
+              <SelectLabel className="text-[10px] font-bold uppercase text-muted-foreground">
+                Bản đồ nền
+              </SelectLabel>
+              {BASE_LAYERS.map((layer) => (
+                <SelectItem
+                  key={layer.id}
+                  value={layer.id}
+                  className="cursor-pointer"
+                  title={layer.description}
+                >
+                  {layer.name}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+            <SelectSeparator />
+            <SelectGroup>
+              <SelectLabel className="text-[10px] font-bold uppercase text-primary">
+                Bản đồ đặc biệt
+              </SelectLabel>
               <SelectItem
-                key={layer.id}
-                value={layer.id}
-                className="cursor-pointer"
-                title={layer.description}
+                value={WEATHER_MAP_MODE_ID}
+                className="cursor-pointer font-semibold"
+                title="Nhiệt độ, lượng mưa và gió tại xã Lao Bảo"
               >
-                {layer.name}
+                Khí tượng – thời tiết
               </SelectItem>
-            ))}
+            </SelectGroup>
           </SelectContent>
         </Select>
 
         {/* Layer panel toggle */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={isLayerPanelOpen ? 'default' : 'outline'}
-              size="sm"
-              onClick={onToggleLayerPanel}
-              className="h-8 shrink-0 px-2.5 gap-1.5 text-xs border-border shadow-none cursor-pointer border!"
-              aria-label="Bật/tắt bảng điều khiển lớp"
-            >
-              <Layers className="size-3.5" />
-              <span className="hidden md:inline">Lớp dữ liệu</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Điều khiển lớp GIS</TooltipContent>
-        </Tooltip>
+        {mapMode === 'gis' && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isLayerPanelOpen ? 'default' : 'outline'}
+                size="sm"
+                onClick={onToggleLayerPanel}
+                className="h-8 shrink-0 px-2.5 gap-1.5 text-xs border-border shadow-none cursor-pointer border!"
+                aria-label="Bật/tắt bảng điều khiển lớp"
+              >
+                <Layers className="size-3.5" />
+                <span className="hidden md:inline">Lớp dữ liệu</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Điều khiển lớp GIS</TooltipContent>
+          </Tooltip>
+        )}
       </div>
     </TooltipProvider>
   );

@@ -23,10 +23,15 @@ import { MapToolbar } from './components/map-toolbar';
 import { MapLayerPanel } from './components/map-layer-panel';
 import { MapLegend } from './components/map-legend';
 import { DisasterAlertPanel } from './components/disaster-alert-panel';
+import { WeatherLegend } from './components/weather-legend';
+import { WeatherPanel } from './components/weather-panel';
+import { WeatherTimeline } from './components/weather-timeline';
+import { useWeatherForecast } from './hooks/use-weather-forecast';
 import { INITIAL_MAP_LAYERS, GIS_LAYER_GROUPS } from '@/data/mock-map-layers';
 import { useTenant } from '@/components/layout/tenant-context';
 import type { MapState } from '@/components/map/map-client';
 import { DEFAULT_BASE_LAYER_ID, LAOBAO_CENTER } from '@/lib/map-config';
+import type { MapMode, WeatherLayerId } from '@/types/weather';
 
 /** Commune center for "fit all" button */
 const COMMUNE_CENTER: [number, number] = [LAOBAO_CENTER.lat, LAOBAO_CENTER.lng];
@@ -211,6 +216,19 @@ export default function MapPage() {
     [number, number, number?] | null
   >(null);
   const [activeBaseLayerId, setActiveBaseLayerId] = React.useState(DEFAULT_BASE_LAYER_ID);
+  const [mapMode, setMapModeState] = React.useState<MapMode>('gis');
+  const [weatherLayerId, setWeatherLayerId] =
+    React.useState<WeatherLayerId>('wind');
+  const [weatherForecastIndex, setWeatherForecastIndex] = React.useState(0);
+  const [weatherOpacity, setWeatherOpacity] = React.useState(0.55);
+  const [weatherSelectedCoordinates, setWeatherSelectedCoordinates] =
+    React.useState<[number, number] | null>(null);
+  const {
+    data: weatherData,
+    isLoading: weatherIsLoading,
+    error: weatherError,
+    reload: reloadWeather,
+  } = useWeatherForecast(mapMode === 'weather');
   // ── UI state ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isLayerPanelOpen, setIsLayerPanelOpen] = React.useState(true);
@@ -218,6 +236,39 @@ export default function MapPage() {
   const [isAlertCollapsed, setIsAlertCollapsed] = React.useState(true);
   const restoreLayerPanelAfterEditRef = React.useRef(false);
   const isPlanningComparisonActiveRef = React.useRef(false);
+  const restoreLayerPanelAfterWeatherRef = React.useRef(true);
+  const baseLayerBeforeWeatherRef = React.useRef(DEFAULT_BASE_LAYER_ID);
+
+  React.useEffect(() => {
+    setWeatherForecastIndex((current) =>
+      Math.min(current, Math.max(0, (weatherData?.forecastHours.length ?? 1) - 1)),
+    );
+  }, [weatherData]);
+
+  const setMapMode = React.useCallback(
+    (nextMode: MapMode) => {
+      if (nextMode === mapMode) return;
+      if (nextMode === 'weather') {
+        if (isPlanningComparisonActiveRef.current) {
+          toast.info('Hãy hoàn tất so sánh quy hoạch trước khi mở bản đồ thời tiết.');
+          return;
+        }
+        baseLayerBeforeWeatherRef.current = activeBaseLayerId;
+        setActiveBaseLayerId(DEFAULT_BASE_LAYER_ID);
+        setIsLayerPanelOpen((isOpen) => {
+          restoreLayerPanelAfterWeatherRef.current = isOpen;
+          return false;
+        });
+        setIsSecurityDialogOpen(false);
+        setWeatherForecastIndex(0);
+      } else {
+        setActiveBaseLayerId(baseLayerBeforeWeatherRef.current);
+        setIsLayerPanelOpen(restoreLayerPanelAfterWeatherRef.current);
+      }
+      setMapModeState(nextMode);
+    },
+    [activeBaseLayerId, mapMode],
+  );
 
   // Detect mobile via window width (hydration-safe)
   const [isMobile, setIsMobile] = React.useState(false);
@@ -246,6 +297,20 @@ export default function MapPage() {
       setFlyToCoords,
       activeBaseLayerId,
       setActiveBaseLayerId,
+      mapMode,
+      setMapMode,
+      weatherLayerId,
+      setWeatherLayerId,
+      weatherForecastIndex,
+      setWeatherForecastIndex,
+      weatherOpacity,
+      setWeatherOpacity,
+      weatherSelectedCoordinates,
+      setWeatherSelectedCoordinates,
+      weatherData,
+      weatherIsLoading,
+      weatherError,
+      reloadWeather,
       currentRole: currentRole ?? null,
     }),
     [
@@ -260,6 +325,16 @@ export default function MapPage() {
       searchQuery,
       flyToCoords,
       activeBaseLayerId,
+      mapMode,
+      setMapMode,
+      weatherLayerId,
+      weatherForecastIndex,
+      weatherOpacity,
+      weatherSelectedCoordinates,
+      weatherData,
+      weatherIsLoading,
+      weatherError,
+      reloadWeather,
       currentRole,
     ]
   );
@@ -335,12 +410,19 @@ export default function MapPage() {
       </div>
 
       {/* ── Layer Panel (desktop inline, mobile Sheet) ── */}
-      <MapLayerPanel
-        mapState={mapState}
-        isOpen={isLayerPanelOpen}
-        onClose={() => setIsLayerPanelOpen(false)}
-        isMobile={isMobile}
-      />
+      {mapMode === 'gis' ? (
+        <MapLayerPanel
+          mapState={mapState}
+          isOpen={isLayerPanelOpen}
+          onClose={() => setIsLayerPanelOpen(false)}
+          isMobile={isMobile}
+        />
+      ) : (
+        <>
+          <WeatherPanel mapState={mapState} />
+          <WeatherTimeline mapState={mapState} />
+        </>
+      )}
 
       <Dialog
         open={isSecurityDialogOpen}
@@ -426,12 +508,22 @@ export default function MapPage() {
       </Dialog>
 
       {/* ── Legend — bottom left ── */}
-      <div className="absolute bottom-8 right-12 z-1000 w-42">
-        <MapLegend
-          activeLayerIds={activeLayerIds}
-          collapsed={isLegendCollapsed}
-          onToggleCollapse={() => setIsLegendCollapsed((p) => !p)}
-        />
+      <div
+        className={
+          mapMode === 'weather'
+            ? 'absolute right-2.5 bottom-29 z-1000 w-[min(32rem,calc(100%-1.25rem))]'
+            : 'absolute right-12 bottom-8 z-1000 w-42'
+        }
+      >
+        {mapMode === 'gis' ? (
+          <MapLegend
+            activeLayerIds={activeLayerIds}
+            collapsed={isLegendCollapsed}
+            onToggleCollapse={() => setIsLegendCollapsed((p) => !p)}
+          />
+        ) : (
+          <WeatherLegend mapState={mapState} />
+        )}
       </div>
 
       {/* ── Disaster alert panel — bottom right ── */}
@@ -446,7 +538,9 @@ export default function MapPage() {
       <div className="absolute bottom-0 right-0 z-1000 flex items-center gap-1.5 px-2 py-1.5 rounded-tl-lg bg-background/90 backdrop-blur-xs border-t border-l border-border/80 shadow-sm">
         <ShieldAlert className="size-3 text-amber-500 shrink-0" />
         <p className="text-[8px] text-muted-foreground leading-none">
-          Ranh giới xã/thôn nghiệp vụ là dữ liệu mô phỏng. Nền hành chính và dữ liệu Hoàng Sa, Trường Sa được tải từ gis.vn; không dùng thay hồ sơ pháp lý. Hệ quy chiếu: EPSG:4326
+          {mapMode === 'weather'
+            ? 'Dữ liệu thời tiết là dự báo mô hình, không dùng thay bản tin hoặc cảnh báo chính thức.'
+            : 'Ranh giới xã/thôn nghiệp vụ là dữ liệu mô phỏng. Nền hành chính và dữ liệu Hoàng Sa, Trường Sa được tải từ gis.vn; không dùng thay hồ sơ pháp lý. Hệ quy chiếu: EPSG:4326'}
         </p>
       </div>
     </div>
