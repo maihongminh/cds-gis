@@ -1588,6 +1588,10 @@ export default function MapClient({
     });
     graticuleRef.current = graticule;
 
+    const initialMapCenter =
+      mapStateRef.current.mapMode === 'weather'
+        ? VIETNAM_CENTER
+        : LAOBAO_CENTER;
     const map = new OlMap({
       target: targetRef.current,
       layers: [
@@ -1603,8 +1607,8 @@ export default function MapClient({
         planningComparisonLayer,
       ],
       view: new View({
-        center: fromLonLat([LAOBAO_CENTER.lng, LAOBAO_CENTER.lat]),
-        zoom: LAOBAO_CENTER.zoom,
+        center: fromLonLat([initialMapCenter.lng, initialMapCenter.lat]),
+        zoom: initialMapCenter.zoom,
         minZoom: 4,
         maxZoom: 20,
       }),
@@ -2206,13 +2210,15 @@ export default function MapClient({
       const height = target.clientHeight;
       context.save();
       context.globalCompositeOperation = 'destination-out';
-      context.fillStyle = 'rgba(0,0,0,0.13)';
+      context.fillStyle = 'rgba(0,0,0,0.08)';
       context.fillRect(0, 0, width, height);
       context.restore();
       context.save();
       context.globalCompositeOperation = 'source-over';
-      context.lineWidth = 1.05;
-      context.strokeStyle = 'rgba(255,255,255,0.92)';
+      context.lineWidth = 1.35;
+      context.strokeStyle = 'rgb(255,255,255)';
+      const zoom = map.getView().getZoom() ?? 6;
+      const zoomBoost = Math.max(1, Math.min(1.65, 1 + (zoom - 7) * 0.08));
 
       particles.forEach((particle) => {
         if (
@@ -2231,9 +2237,15 @@ export default function MapClient({
         }
         const [longitude, latitude] = toLonLat(coordinate);
         const [windX, windY] = sampleVector(longitude, latitude);
-        const speedScale = 0.035;
-        const nextX = particle.x + windX * speedScale;
-        const nextY = particle.y + windY * speedScale;
+        const windMagnitude = Math.hypot(windX, windY);
+        if (windMagnitude < 0.01) {
+          resetParticle(particle);
+          return;
+        }
+        const stepLength =
+          Math.max(0.85, Math.min(2.4, windMagnitude * 0.065)) * zoomBoost;
+        const nextX = particle.x + (windX / windMagnitude) * stepLength;
+        const nextY = particle.y + (windY / windMagnitude) * stepLength;
         context.beginPath();
         context.moveTo(particle.x, particle.y);
         context.lineTo(nextX, nextY);

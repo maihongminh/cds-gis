@@ -30,13 +30,18 @@ import { useWeatherForecast } from './hooks/use-weather-forecast';
 import { INITIAL_MAP_LAYERS, GIS_LAYER_GROUPS } from '@/data/mock-map-layers';
 import { useTenant } from '@/components/layout/tenant-context';
 import type { MapState } from '@/components/map/map-client';
-import { DEFAULT_BASE_LAYER_ID, LAOBAO_CENTER } from '@/lib/map-config';
+import {
+  BASE_LAYERS,
+  DEFAULT_BASE_LAYER_ID,
+  LAOBAO_CENTER,
+} from '@/lib/map-config';
 import type { MapMode, WeatherLayerId } from '@/types/weather';
 
 /** Commune center for "fit all" button */
 const COMMUNE_CENTER: [number, number] = [LAOBAO_CENTER.lat, LAOBAO_CENTER.lng];
 const SECURITY_GROUP_ID = 'security_defense';
 const DEMO_SECURITY_PASSWORD = 'Daylamatkhau';
+const MAP_PREFERENCE_STORAGE_KEY = 'cds-gis:map-preference:v1';
 const SECURITY_LAYER_IDS = new Set(
   INITIAL_MAP_LAYERS.filter(
     (layer) => layer.dataGroup === SECURITY_GROUP_ID,
@@ -46,6 +51,18 @@ const SECURITY_LAYER_IDS = new Set(
 type PendingSecurityAction =
   | { type: 'toggle-layer'; layerId: string }
   | { type: 'enable-group'; groupId: string };
+
+interface StoredMapPreference {
+  mapMode: MapMode;
+  baseLayerId: string;
+  weatherLayerId: WeatherLayerId;
+}
+
+function isWeatherLayerId(value: unknown): value is WeatherLayerId {
+  return (
+    value === 'temperature' || value === 'precipitation' || value === 'wind'
+  );
+}
 
 export default function MapPage() {
   const { currentRole } = useTenant();
@@ -217,6 +234,8 @@ export default function MapPage() {
   >(null);
   const [activeBaseLayerId, setActiveBaseLayerId] = React.useState(DEFAULT_BASE_LAYER_ID);
   const [mapMode, setMapModeState] = React.useState<MapMode>('gis');
+  const [hasRestoredMapPreference, setHasRestoredMapPreference] =
+    React.useState(false);
   const [weatherLayerId, setWeatherLayerId] =
     React.useState<WeatherLayerId>('wind');
   const [weatherForecastIndex, setWeatherForecastIndex] = React.useState(0);
@@ -238,6 +257,65 @@ export default function MapPage() {
   const isPlanningComparisonActiveRef = React.useRef(false);
   const restoreLayerPanelAfterWeatherRef = React.useRef(true);
   const baseLayerBeforeWeatherRef = React.useRef(DEFAULT_BASE_LAYER_ID);
+
+  React.useEffect(() => {
+    try {
+      const storedValue = window.localStorage.getItem(
+        MAP_PREFERENCE_STORAGE_KEY,
+      );
+      if (!storedValue) return;
+
+      const storedPreference = JSON.parse(
+        storedValue,
+      ) as Partial<StoredMapPreference>;
+      const baseLayerId = BASE_LAYERS.some(
+        (layer) => layer.id === storedPreference.baseLayerId,
+      )
+        ? storedPreference.baseLayerId!
+        : DEFAULT_BASE_LAYER_ID;
+      const storedMapMode: MapMode =
+        storedPreference.mapMode === 'weather' ? 'weather' : 'gis';
+
+      baseLayerBeforeWeatherRef.current = baseLayerId;
+      setActiveBaseLayerId(
+        storedMapMode === 'weather' ? DEFAULT_BASE_LAYER_ID : baseLayerId,
+      );
+      setMapModeState(storedMapMode);
+      if (isWeatherLayerId(storedPreference.weatherLayerId)) {
+        setWeatherLayerId(storedPreference.weatherLayerId);
+      }
+    } catch {
+      // Fall back to Liberty when storage is unavailable or malformed.
+    } finally {
+      setHasRestoredMapPreference(true);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!hasRestoredMapPreference) return;
+
+    const preference: StoredMapPreference = {
+      mapMode,
+      baseLayerId:
+        mapMode === 'weather'
+          ? baseLayerBeforeWeatherRef.current
+          : activeBaseLayerId,
+      weatherLayerId,
+    };
+    try {
+      window.localStorage.setItem(
+        MAP_PREFERENCE_STORAGE_KEY,
+        JSON.stringify(preference),
+      );
+    } catch {
+      // The map remains usable when storage is unavailable or disabled.
+    }
+  }, [
+    activeBaseLayerId,
+    hasRestoredMapPreference,
+    mapMode,
+    weatherLayerId,
+  ]);
 
   React.useEffect(() => {
     setWeatherForecastIndex((current) =>
@@ -382,6 +460,16 @@ export default function MapPage() {
     }
     setIsLayerPanelOpen((isOpen) => !isOpen);
   }, []);
+
+  if (!hasRestoredMapPreference) {
+    return (
+      <div
+        className="h-[calc(100vh-4rem)] w-full bg-slate-100 dark:bg-slate-950"
+        aria-busy="true"
+        aria-label="Đang khôi phục bản đồ đã chọn"
+      />
+    );
+  }
 
   return (
     <div className="relative w-[calc(100%+2rem)] md:w-[calc(100%+3rem)] xl:w-[calc(100%+4rem)] h-[calc(100vh-4rem)] -m-4 md:-m-6 xl:-m-8 overflow-hidden animate-fade-in">
